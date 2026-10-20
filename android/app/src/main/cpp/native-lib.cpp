@@ -53,10 +53,12 @@ Java_app_zapp_NodeBridge_startNode(JNIEnv* env, jclass, jobjectArray arguments) 
         total += strlen(s) + 1;
         env->ReleaseStringUTFChars(js, s);
     }
-    // o Node exige argv contíguo na memória
+
+    // node::Start() exige argv[] terminé par nullptr.
     char* buffer = (char*)calloc(total + 1, 1);
-    char** argv = (char**)calloc(argc + 1, sizeof(char*));
+    char** argv = (char**)calloc((size_t)argc + 2, sizeof(char*));
     char* cur = buffer;
+
     for (jsize i = 0; i < argc; i++) {
         jstring js = (jstring)env->GetObjectArrayElement(arguments, i);
         const char* s = env->GetStringUTFChars(js, nullptr);
@@ -66,5 +68,11 @@ Java_app_zapp_NodeBridge_startNode(JNIEnv* env, jclass, jobjectArray arguments) 
         cur += len + 1;
         env->ReleaseStringUTFChars(js, s);
     }
-    return (jint)node::Start((int)argc, argv);
+
+    argv[argc] = nullptr;
+
+    int result = (int)node::Start((int)argc, argv);
+    free(buffer);
+    free(argv);
+    return result;
 }
