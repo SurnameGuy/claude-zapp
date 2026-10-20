@@ -1,0 +1,22 @@
+{
+  "name": "zapp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "build:assets": "node scripts/build-assets.mjs",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "ionicons": "^7.4.0",
+    "@fontsource-variable/inter": "^5.1.0"
+  },
+  "description": "Cliente web/Android para o recurso Aparelhos conectados do WhatsApp"
+}

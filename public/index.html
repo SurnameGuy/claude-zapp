@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#F7F7F7">
+<title>WhatsApp</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="phone">
+  <section id="login" hidden></section>
+
+  <div id="app" hidden>
+    <div id="tabsView">
+      <div id="pages">
+        <section class="page" id="pg-updates">
+          <div class="nb"><span></span><span class="t">Atualizações</span><span class="side"><button class="ibtn" id="addStatus"></button></span></div>
+          <h1 class="lt">Atualizações</h1>
+          <div id="updList"></div>
+        </section>
+        <section class="page" id="pg-calls">
+          <div class="nb"><span></span><span class="t">Chamadas</span><span class="side"><button class="ibtn" id="newCall"></button></span></div>
+          <h1 class="lt">Chamadas</h1>
+          <div class="seg" id="callSeg"><button class="on" data-f="all">Todas</button><button data-f="missed">Perdidas</button></div>
+          <div id="callList"></div>
+        </section>
+        <section class="page on" id="pg-chats">
+          <div class="nb"><button class="tintbtn" id="editBtn">Listas</button><span class="t">Conversas</span><span class="side"><button class="ibtn" id="compose"></button></span></div>
+          <h1 class="lt">Conversas</h1>
+          <label class="search"><span id="sIc" class="ic"></span><input id="q" placeholder="Pesquisar" autocomplete="off"></label>
+          <div class="chips" id="chips"></div>
+          <div id="archRow"></div>
+          <div id="chatList"></div>
+        </section>
+        <section class="page grp" id="pg-settings">
+          <div class="nb"><span></span><span class="t">Ajustes</span><span></span></div>
+          <h1 class="lt">Ajustes</h1>
+          <div id="setBody"></div>
+        </section>
+      </div>
+      <nav id="tabbar"></nav>
+    </div>
+
+    <section id="chat">
+      <div id="chatNav">
+        <button id="back"></button>
+        <div id="hd"><div id="hdAv"></div><div class="tt"><div id="hdName"></div><div id="hdSub"></div></div></div>
+        <div class="acts"><button class="ibtn" id="vcall"></button><button class="ibtn" id="acall"></button></div>
+        <div id="selNav" hidden><button class="tintbtn" id="selCancel">Cancelar</button><b id="selCount"></b><span style="width:60px"></span></div>
+      </div>
+      <div id="findBar" hidden><label class="search"><span id="fIc" class="ic"></span><input id="findIn" placeholder="Pesquisar na conversa"></label><button class="tintbtn" id="findX">OK</button></div>
+      <div id="msgs"></div>
+      <div id="replyBar" hidden><div class="quote" id="replyQ"></div><button id="replyX"></button></div>
+      <div id="comp">
+        <button class="plus" id="plus"></button>
+        <div id="pill"><textarea id="txt" rows="1" placeholder="Mensagem"></textarea><button class="stk2" id="stkIc"></button></div>
+        <div id="recBar" hidden><button class="trash" id="recCancel"></button><span class="dot"></span><span class="tm2" id="recTime">0:00</span><span class="hint" id="recHint">‹ Deslize para cancelar</span></div>
+        <div class="rt" id="rt"><button id="camBtn"></button><button id="micBtn"></button></div>
+        <div class="rt" id="rtSend" hidden><button id="sendBtn"></button></div>
+        <div id="recLock" hidden></div>
+      </div>
+      <div id="selBar" hidden></div>
+      <div id="panel" hidden></div>
+    </section>
+
+    <div id="scrim"></div>
+    <div id="sheet"></div>
+    <div class="alertc" id="alert"></div>
+    <div id="full"><div class="hdr"><span style="width:70px"></span><span id="fullT"></span><button class="tintbtn" id="fullX" style="width:70px;text-align:right">Cancelar</button></div><div class="lst" id="fullL"></div></div>
+    <div id="ctx"></div>
+    <div id="pv"><div class="top"><button id="pvX"></button><span></span></div><div class="stage" id="pvStage"></div><div class="cap" id="pvCap"><textarea id="pvTxt" rows="1" placeholder="Adicione uma legenda…"></textarea><button id="pvSend"></button></div></div>
+    <div id="sv"><div class="bars" id="svBars"></div><div class="who2" id="svWho"></div><div class="st" id="svSt"></div><div class="cap2" id="svCap"></div><div class="zl" id="svL"></div><div class="zr" id="svR"></div></div>
+    <div id="call"></div>
+    <div id="toast"></div>
+    <input type="file" id="fMedia" accept="image/*,video/*" hidden>
+    <input type="file" id="fCam" accept="image/*" capture="environment" hidden>
+    <input type="file" id="fDoc" hidden>
+    <input type="file" id="fSticker" accept="image/*" hidden>
+    <input type="file" id="fWall" accept="image/*" hidden>
+    <input type="file" id="fAvatar" accept="image/*" hidden>
+  </div>
+</div>
+<script src="js/icons.js"></script>
+<script src="js/core.js"></script>
+<script src="js/lists.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/extras.js"></script>
+<script src="js/settings.js"></script>
+<script>boot()</script>
+</body>
+</html>

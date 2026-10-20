@@ -1,0 +1,11 @@
+// Gera public/js/icons.js a partir do Ionicons (MIT). Rode: node scripts/gen-icons.mjs
+import fs from 'fs'
+const names = `chatbubbles chatbubbles-outline call call-outline settings settings-outline camera camera-outline videocam videocam-outline mic mic-outline send add add-circle chevron-back chevron-forward chevron-down close close-circle search search-outline trash-outline create-outline create document-outline document-text-outline image-outline images-outline happy-outline location-outline person-outline person-add-outline people-outline people bar-chart-outline star-outline star arrow-undo-outline arrow-redo-outline copy-outline language-outline share-outline share-social-outline information-circle-outline ban-outline notifications-outline notifications-off-outline notifications archive-outline pin-outline pin checkmark checkmark-circle ellipse-outline time-outline eye-off-outline lock-closed-outline lock-closed color-palette-outline download-outline play pause stop globe-outline megaphone-outline text-outline ellipsis-horizontal ellipsis-horizontal-circle-outline sparkles-outline moon-outline sunny-outline key-outline hand-left-outline server-outline help-circle-outline log-out-outline refresh-outline warning-outline link-outline albums-outline timer-outline logo-whatsapp mail-unread-outline folder-outline volume-mute-outline phone-portrait-outline qr-code-outline heart-outline arrow-down arrow-up-outline arrow-down-outline cloud-download-outline cloud-upload-outline funnel-outline reader-outline text arrow-back-outline cog-outline person-circle-outline shield-checkmark-outline chatbox-ellipses-outline contrast-outline`.split(/\s+/)
+const out = {}
+for (const n of names) {
+  const f = `node_modules/ionicons/dist/svg/${n}.svg`
+  if (!fs.existsSync(f)) { console.log('faltando:', n); continue }
+  out[n] = fs.readFileSync(f, 'utf8').replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '').replace(/<title>.*?<\/title>/g, '')
+}
+fs.writeFileSync('public/js/icons.js', '// gerado por scripts/gen-icons.mjs (Ionicons, MIT)\nconst ION = ' + JSON.stringify(out) + '\n')
+console.log(Object.keys(out).length, 'ícones,', (fs.statSync('public/js/icons.js').size / 1024).toFixed(0), 'KB')
