@@ -1,0 +1,56 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Dependências do servidor
+        run: npm ci --no-audit --no-fund
+
+      - name: Node.js para Android
+        run: bash scripts/fetch-libnode.sh
+
+      - name: Empacotar servidor e interface
+        run: npm run build:assets
+
+      - name: Compilar APK
+        run: gradle -p android assembleRelease --no-daemon --stacktrace
+
+      - name: Publicar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zapp-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Criar release com o APK
+        if: github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk Zapp.apk
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest Zapp.apk --title "Zapp (última versão)" --notes "APK gerado automaticamente. Baixe o arquivo Zapp.apk e instale no Android." --target "${{ github.sha }}"
