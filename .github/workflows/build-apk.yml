@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -37,7 +40,6 @@ jobs:
             mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
           fi
 
-          # Accept all Android SDK licenses without failing the workflow on the pipe-close
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses >/dev/null || true
 
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" \
@@ -77,4 +79,7 @@ jobs:
         run: |
           cp android/app/build/outputs/apk/release/app-release.apk Zapp.apk
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest Zapp.apk --title "Zapp (última versão)" --notes "APK gerado automaticamente. Baixe o arquivo Zapp.apk e instale no Android." --target "${{ github.sha }}"
+          gh release create latest Zapp.apk \
+            --title "Zapp (última versão)" \
+            --notes "APK gerado automaticamente. Baixe o arquivo Zapp.apk e instale no Android." \
+            --target "${{ github.sha }}"
