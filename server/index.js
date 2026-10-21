@@ -300,49 +300,68 @@ function resetStaleSession(reason = '') {
 
 async function start() {
   clearTimeout(reconnectTimer);
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-    // No Android (Node 18), evite o fetch dinâmico para prevenir falhas de rede/TLS
-    // Use a tupla de versão testada e homologada para evitar o erro 405 da Meta:
-    const stableVersion = [2, 3000, 1033893291]; 
-    console.log('Usando versão fixa compatível com Node 18:', stableVersion);
+  let version;
+  if (process.env.NOVERSION) {
+    console.log('Usando a versão padrão do Baileys');
+  } else {
+    try {
+      // 1. Tenta buscar a versão real direto do servidor da Meta (evita o erro 405 client_too_old)
+      const r = await Promise.race([
+        fetchLatestWaWebVersion(),
+        new Promise((_, no) => setTimeout(() => no(new Error('tempo esgotado')), 6000))
+      ]);
+      version = r.version;
+      console.log('Versão dinâmica do WA Web obtida:', version);
+    } catch (e1) {
+      try {
+        // 2. Fallback para a versão padrão do repositório do Baileys
+        const r2 = await fetchLatestBaileysVersion();
+        version = r2.version;
+        console.log('Versão fallback do Baileys obtida:', version);
+      } catch (e2) {
+        // 3. Fallback estático de segurança caso a rede mobile esteja sem acesso externo total
+        version = [2, 3000, 1033893291];
+        console.log('Usando versão estática de emergência:', version);
+      }
+    }
+  }
 
-    const s = makeWASocket({
+  const s = makeWASocket({
     auth: state,
-        version: stableVersion,
-        // Assinatura de navegador ideal para evitar bloqueio de IP/método no mobile
-        browser: ['Chrome', 'Windows', '110.0.5481.177'],
-        syncFullHistory: !process.env.NOHISTORY, 
-        shouldSyncHistoryMessage: () => true,
-        markOnlineOnConnect: false, 
-        getMessage: async () => undefined,
-    });
-  
-  sock = s; 
-    qrReady = false;
-    
-    state.creds.registered ? setStatus('connecting') : setStatus('unpaired', { pairCode: null });
-    s.ev.on('creds.update', saveCreds);
+    version: version, // Usa a versão atualizada dinamicamente
+    browser: Browsers.macOS('Desktop'), // Mantém o macOS que é mais tolerável a conexões mobile
+    syncFullHistory: !process.env.NOHISTORY, 
+    shouldSyncHistoryMessage: () => true,
+    markOnlineOnConnect: false, 
+    getMessage: async () => undefined,
+  });
 
-    s.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+  sock = s; 
+  qrReady = false;
+  
+  state.creds.registered ? setStatus('connecting') : setStatus('unpaired', { pairCode: null });
+  s.ev.on('creds.update', saveCreds);
+
+  s.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (s !== sock) return;
-        if (qr) { 
-            qrReady = true; 
-            qrWaiters.forEach((f) => f()); 
-            qrWaiters = []; 
-        }
-        if (connection === 'open') {
-            retries = 0; 
-            lastErr = '';
-            me = jidNormalizedUser(s.user?.id); 
-            myName = s.user?.name || '';
-            setStatus('open', { pairCode: null }); 
-            console.log('Conectado como', me);
-        }
-        if (connection === 'close') {
-                      lastErr = '';
-            const code = lastDisconnect?.error?.output?.statusCode;
-            console.log(`Conexão fechada. Código: ${code}`);
+    if (qr) { 
+      qrReady = true; 
+      qrWaiters.forEach((f) => f()); 
+      qrWaiters = []; 
+    }
+    if (connection === 'open') {
+      retries = 0; 
+      lastErr = '';
+      me = jidNormalizedUser(s.user?.id); 
+      myName = s.user?.name || '';
+      setStatus('open', { pairCode: null }); 
+      console.log('Conectado como', me);
+    }
+    if (connection === 'close') {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      console.log(`Conexão fechada. Código: ${code}`);
       me = null
 
       const stale = code === DisconnectReason.loggedOut || code === 401 || /stale|invalid session|bad session|connection terminated|unauthorized/i.test(lastErr)
