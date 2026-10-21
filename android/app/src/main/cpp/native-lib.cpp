@@ -7,6 +7,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <signal.h>
 #include "node.h"
 
 #define TAG "zapp-node"
@@ -44,6 +45,32 @@ Java_app_zapp_NodeBridge_setEnv(JNIEnv* env, jclass, jstring k, jstring v) {
     }
     if (ck) env->ReleaseStringUTFChars(k, ck);
     if (cv) env->ReleaseStringUTFChars(v, cv);
+}
+
+// node::Start() restaura TODOS os sinais para SIG_DFL (PlatformInit). Isso remove os handlers do ART (SIGSEGV usado
+// para NullPointerException/stack overflow) e do debuggerd: o app morre em silêncio, sem tombstone. Guardamos os
+// handlers antes e os devolvemos assim que o Node terminar de inicializar (só se ainda estiverem em SIG_DFL).
+static const int kGuarded[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGTRAP};
+static struct sigaction savedActs[64];
+
+static bool hasHandler(const struct sigaction& a) {
+    return (a.sa_flags & SA_SIGINFO) || (a.sa_handler != SIG_DFL && a.sa_handler != SIG_IGN);
+}
+
+static void* signalGuard(void*) {
+    const useconds_t waits[] = {200000, 400000, 800000, 1500000, 3000000, 5000000};
+    for (useconds_t w : waits) {
+        usleep(w);
+        for (int sig : kGuarded) {
+            struct sigaction cur;
+            if (sigaction(sig, nullptr, &cur) != 0) continue;
+            if (!hasHandler(cur) && hasHandler(savedActs[sig])) {
+                sigaction(sig, &savedActs[sig], nullptr);
+                __android_log_print(ANDROID_LOG_WARN, TAG, "handler do sinal %d restaurado apos node::Start", sig);
+            }
+        }
+    }
+    return nullptr;
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -90,5 +117,10 @@ Java_app_zapp_NodeBridge_startNode(JNIEnv* env, jclass, jobjectArray arguments) 
     }
 
     argv[argc] = nullptr;
+
+    for (int sig : kGuarded) sigaction(sig, nullptr, &savedActs[sig]);
+    pthread_t g;
+    if (pthread_create(&g, nullptr, signalGuard, nullptr) == 0) pthread_detach(g);
     return static_cast<jint>(node::Start(static_cast<int>(argc), argv.get()));
 }
+
