@@ -316,7 +316,7 @@ async function start() {
       console.log('Conexão fechada:', code, '-', lastDisconnect?.error?.message)
       me = null
 
-      const stale = code === DisconnectReason.loggedOut || code === 428 || /stale|invalid session|bad session|connection terminated/i.test(lastErr)
+      const stale = code === DisconnectReason.loggedOut || /stale|invalid session|bad session|connection terminated/i.test(lastErr)
       if (stale) {
         resetStaleSession(lastErr || `code:${code}`)
         return
@@ -449,14 +449,24 @@ app.post('/api/pair', wrap(async (req, res) => {
       throw new Error('Não foi possível iniciar a sessão do WhatsApp. Tente novamente.')
     }
   }
+
+  console.log('[pair] Aguardando o socket WebSocket estabelecer conexão com a Meta...')
+  let attempts = 0
+  while ((!sock?.ws || sock.ws.readyState !== 1) && attempts < 50) {
+    await new Promise((r) => setTimeout(r, 200))
+    attempts++
+  }
+
   const s = sock
+  if (!s) throw new Error('Socket não inicializado.')
+
   const limit = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), ms))])
   let raw
-  try { raw = await limit(s.requestPairingCode(number), 40000) }
-  catch (e) {
+  try { 
+    raw = await limit(s.requestPairingCode(number), 40000) 
+  } catch (e) {
     const reason = lastErr || e.message || 'sessão inválida'
-    resetStaleSession(reason)
-    throw new Error('Não foi possível conectar ao WhatsApp' + ` (${reason})` + '. Tente de novo.')
+    throw new Error('Não foi possível conectar ao WhatsApp (' + reason + '). Tente de novo.')
   }
   const code = raw.match(/.{1,4}/g).join('-')
   setStatus('pairing', { pairCode: code }); res.json({ code })
@@ -569,276 +579,16 @@ function afterSend(jid, sent) {
 const quotedOpt = (jid, id) => { const q = id && rawOf(jid, id); return q ? { quoted: q } : {} }
 async function sendTo(jid, content, opts = {}) { ensureConnected(); jid = canon(jid); return afterSend(jid, await sock.sendMessage(jid, content, opts)) }
 const mediaFile = (id) => path.join(MEDIA_DIR, safe(id))
-const thumbOf = (req) => { const t = req.headers['x-thumb'], d = String(req.headers['x-dim'] || '').split('x').map(Number); return { ...(t ? { jpegThumbnail: Buffer.from(t, 'base64') } : {}), ...((d[0] && d[1]) ? { width: d[0], height: d[1] } : {}) } 
+const thumbOf = (req) => { const t = req.headers['x-thumb'], d = String(req.headers['x-dim'] || '').split('x').map(Number); return { ...(t ? { jpegThumbnail: Buffer.from(t, 'base64') } : {}), ...((d[0] && d[1]) ? { width: d[0], height: d[1] } : {}) } }
 
 app.post('/api/send', wrap(async (req, res) => {
   const { jid, text, quotedId } = req.body
-  if (!jid || !text?.trim()) throw new Error('Mensagem vazia')
-  res.json({ ok: true, id: await sendTo(jid, { text }, quotedOpt(canon(jid), quotedId)) })
-}))
-app.post('/api/send-media', rawBody, wrap(async (req, res) => {
-  const jid = canon(req.query.jid), caption = req.query.caption || '', filename = req.query.filename || 'arquivo'
-  const mime = (req.headers['content-type'] || 'application/octet-stream').split(';')[0]
-  if (!jid || !Buffer.isBuffer(req.body) || !req.body.length) throw new Error('Arquivo vazio')
-  const th = thumbOf(req)
-  let content
-  if (mime.startsWith('image/') && mime !== 'image/gif') content = { image: req.body, caption, mimetype: mime, ...th }
-  else if (mime.startsWith('video/') || mime === 'image/gif') content = { video: req.body, caption, mimetype: mime === 'image/gif' ? 'video/mp4' : mime, gifPlayback: req.query.gif === '1', ...th }
-  else if (mime.startsWith('audio/')) content = { audio: req.body, mimetype: mime, ptt: false }
-  else content = { document: req.body, mimetype: mime, fileName: filename, caption }
-  const id = await sendTo(jid, content, quotedOpt(jid, req.query.quotedId))
-  if (id) fs.writeFile(mediaFile(id), req.body, () => {})
+  if (!jid || !text?.trim()) throw new Error('Destinatário ou texto inválidos')
+  const id = await sendTo(jid, { text: text.trim() }, quotedOpt(jid, quotedId))
   res.json({ ok: true, id })
 }))
-app.post('/api/send-audio', rawBody, wrap(async (req, res) => {
-  const jid = canon(req.query.jid)
-  if (!jid || !Buffer.isBuffer(req.body) || !req.body.length) throw new Error('Áudio vazio')
-  let ogg = req.body
-  if (isWebm(ogg)) ogg = webmToOgg(ogg)
-  else if (!(ogg.subarray(0, 4).toString() === 'OggS')) throw new Error('Formato de áudio não suportado neste navegador. Use o app Android ou o Chrome.')
-  const id = await sendTo(jid, { audio: ogg, ptt: true, mimetype: 'audio/ogg; codecs=opus' }, quotedOpt(jid, req.query.quotedId))
-  if (id) fs.writeFile(mediaFile(id), ogg, () => {})
-  res.json({ ok: true, id })
-}))
-app.post('/api/send-sticker', rawBody, wrap(async (req, res) => {
-  const jid = canon(req.query.jid)
-  if (!Buffer.isBuffer(req.body) || !req.body.length) throw new Error('Imagem vazia')
-  res.json({ ok: true, id: await sendTo(jid, { sticker: req.body }) })
-}))
-app.post('/api/send-location', wrap(async (req, res) => {
-  const { jid, lat, lng, name } = req.body
-  res.json({ ok: true, id: await sendTo(jid, { location: { degreesLatitude: lat, degreesLongitude: lng, name } }) })
-}))
-app.post('/api/send-contact', wrap(async (req, res) => {
-  const { jid, contactJid } = req.body, n = numberOf(contactJid), name = nameOf(canon(contactJid))
-  const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${name}\nTEL;type=CELL;waid=${n}:+${n}\nEND:VCARD`
-  res.json({ ok: true, id: await sendTo(jid, { contacts: { displayName: name, contacts: [{ displayName: name, vcard }] } }) })
-}))
-app.post('/api/send-poll', wrap(async (req, res) => {
-  const { jid, name, options, multi } = req.body
-  if (!name || (options || []).length < 2) throw new Error('A enquete precisa de uma pergunta e ao menos 2 opções')
-  res.json({ ok: true, id: await sendTo(jid, { poll: { name, values: options, selectableCount: multi ? 0 : 1 } }) })
-}))
-app.post('/api/react', wrap(async (req, res) => {
-  const { jid, id, emoji } = req.body, raw = rawOf(jid, id)
-  if (!raw) throw new Error('Mensagem não encontrada')
-  ensureConnected()
-  await sock.sendMessage(canon(jid), { react: { text: emoji || '', key: raw.key } })
-  raw._rx ||= {}; if (emoji) raw._rx.me = emoji; else delete raw._rx.me
-  const p = parseMessage(raw, canon(jid)); p && broadcast('message', { chat: chatView(canon(jid)), message: p }); saveStore()
-  res.json({ ok: true })
-}))
-app.post('/api/edit', wrap(async (req, res) => {
-  const { jid, id, text } = req.body, raw = rawOf(jid, id)
-  if (!raw?.key.fromMe) throw new Error('Só é possível editar suas mensagens')
-  ensureConnected()
-  await sock.sendMessage(canon(jid), { text, edit: raw.key })
-  raw.message = { conversation: text }; raw._edited = true
-  const p = parseMessage(raw, canon(jid)); p && broadcast('message', { chat: chatView(canon(jid)), message: p }); saveStore()
-  res.json({ ok: true })
-}))
-app.post('/api/delete', wrap(async (req, res) => {
-  const { jid: j, ids, mode } = req.body, jid = canon(j)
-  ensureConnected()
-  for (const id of ids) {
-    const raw = rawOf(jid, id); if (!raw) continue
-    if (mode === 'all') {
-      await sock.sendMessage(jid, { delete: raw.key }); raw._deleted = true
-      const p = parseMessage(raw, jid); p && broadcast('message', { chat: chatView(jid), message: p })
-    } else {
-      try { await sock.chatModify({ deleteForMe: { deleteMedia: false, key: raw.key, timestamp: tsOf(raw.messageTimestamp) } }, jid) } catch (e) { console.log('deleteForMe', e.message) }
-      store.messages[jid] = store.messages[jid].filter((x) => x.key.id !== id)
-    }
-  }
-  saveStore(); notifyChats(); res.json({ ok: true })
-}))
-app.post('/api/forward', wrap(async (req, res) => {
-  ensureConnected()
-  for (const { jid, id } of req.body.items) {
-    const raw = rawOf(jid, id); if (!raw) continue
-    for (const to of req.body.to) afterSend(canon(to), await sock.sendMessage(canon(to), { forward: raw }))
-  }
-  res.json({ ok: true })
-}))
-app.post('/api/star', wrap(async (req, res) => {
-  const { jid: j, ids, on } = req.body, jid = canon(j)
-  for (const id of ids) {
-    if (on) store.starred[id] = true; else delete store.starred[id]
-    const raw = rawOf(jid, id)
-    if (raw && status === 'open') try { await sock.chatModify({ star: { messages: [{ id, fromMe: raw.key.fromMe }], star: !!on } }, jid) } catch {}
-    const p = raw && parseMessage(raw, jid); p && broadcast('message', { chat: chatView(jid), message: p })
-  }
-  saveStore(); res.json({ ok: true })
-}))
-app.post('/api/presence', wrap(async (req, res) => {
-  if (status === 'open') { const jid = canon(req.body.jid); if (req.body.state === 'subscribe') await sock.presenceSubscribe(jid); else await sock.sendPresenceUpdate(req.body.state, jid) }
-  res.json({ ok: true })
-}))
-app.post('/api/translate', wrap(async (req, res) => {
-  const r = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(String(req.body.text).slice(0, 450)) + '&langpair=autodetect|' + (req.body.to || 'pt-BR'))
-  const j = await r.json()
-  res.json({ text: j?.responseData?.translatedText || '' })
-}))
 
-app.get('/api/stickers', (_, res) => res.json(store.stickers.map((s) => ({ id: s.id, sha: s.sha }))))
-async function downloadRaw(raw) {
-  const f = mediaFile(raw.key.id)
-  if (fs.existsSync(f)) return f
-  ensureConnected()
-  const buf = await downloadMediaMessage(raw, 'buffer', {}, { logger, reuploadRequest: sock.updateMediaMessage })
-  fs.writeFileSync(f, buf); return f
-}
-app.get('/api/sticker/:id', wrap(async (req, res) => {
-  const s = store.stickers.find((x) => x.id === req.params.id); if (!s) return res.sendStatus(404)
-  res.type('image/webp').set('Cache-Control', 'private, max-age=86400').sendFile(await downloadRaw(s.raw))
-}))
-app.post('/api/send-sticker-ref', wrap(async (req, res) => {
-  const s = store.stickers.find((x) => x.id === req.body.id); if (!s) throw new Error('Figurinha não encontrada')
-  res.json({ ok: true, id: await sendTo(req.body.jid, { sticker: fs.readFileSync(await downloadRaw(s.raw)) }) })
-}))
-app.get('/api/gifs', wrap(async (req, res) => {
-  const key = store.cfg.gifKey, q = String(req.query.q || '').trim()
-  if (!key) return res.json({ needKey: true, items: [] })
-  const prov = store.cfg.gifProvider || 'giphy'
-  let items = []
-  if (prov === 'tenor') {
-    const j = await (await fetch(`https://tenor.googleapis.com/v2/${q ? 'search' : 'featured'}?key=${encodeURIComponent(key)}&client_key=zapp&limit=30&media_filter=tinygif,mp4&locale=pt_BR&q=${encodeURIComponent(q)}`)).json()
-    items = (j.results || []).map((r) => ({ id: r.id, preview: r.media_formats?.tinygif?.url, mp4: r.media_formats?.mp4?.url })).filter((x) => x.mp4)
-  } else {
-    const j = await (await fetch(`https://api.giphy.com/v1/gifs/${q ? 'search' : 'trending'}?api_key=${encodeURIComponent(key)}&limit=30&rating=pg-13&lang=pt&q=${encodeURIComponent(q)}`)).json()
-    items = (j.data || []).map((r) => ({ id: r.id, preview: r.images?.fixed_width_small?.url || r.images?.fixed_width?.url, mp4: r.images?.original_mp4?.mp4 || r.images?.fixed_height?.mp4 })).filter((x) => x.mp4)
-  }
-  res.json({ items })
-}))
-app.post('/api/send-gif', wrap(async (req, res) => {
-  const u = new URL(req.body.url)
-  if (!/(^|\.)(giphy\.com|tenor\.com|googleapis\.com)$/.test(u.hostname) || u.protocol !== 'https:') throw new Error('Origem de GIF inválida')
-  const buf = Buffer.from(await (await fetch(u)).arrayBuffer())
-  res.json({ ok: true, id: await sendTo(req.body.jid, { video: buf, gifPlayback: true, mimetype: 'video/mp4' }) })
-}))
-
-const inflight = new Map()
-app.get('/api/media/:jid/:id', async (req, res) => {
-  try {
-    const isStatus = req.params.jid === 'status@broadcast', jid = isStatus ? null : canon(req.params.jid)
-    const raw = isStatus ? store.statuses.find((x) => x.key.id === req.params.id) : rawOf(jid, req.params.id)
-    if (!raw) return res.status(404).send('Mensagem não encontrada')
-    const p = parseMessage(raw, jid || 'status@broadcast')
-    if (!p || p.viewOnce) return res.status(403).send('Esta mídia só pode ser aberta no celular')
-    const f = mediaFile(raw.key.id)
-    if (!fs.existsSync(f)) {
-      if (!inflight.has(raw.key.id)) inflight.set(raw.key.id, downloadRaw(raw).finally(() => inflight.delete(raw.key.id)))
-      await inflight.get(raw.key.id)
-    }
-    res.type((p.mime || 'application/octet-stream').split(';')[0]).set({ 'Content-Disposition': `inline; filename="${encodeURIComponent(p.fileName || p.id)}"`, 'Cache-Control': 'private, max-age=3600' }).sendFile(f)
-  } catch (e) { res.status(500).send('Não foi possível baixar a mídia: ' + e.message) }
+server.listen(PORT, HOST, () => {
+  console.log(`[server] rodando em http://${HOST}:${PORT}`)
+  maybeAutoStart()
 })
-
-app.get('/api/calls', (_, res) => res.json(store.calls.map((c) => ({ ...c, name: nameOf(c.jid) }))))
-const rejectCall = async (id, from) => { ensureConnected(); await sock.rejectCall(id, from); const e = store.calls.find((c) => c.id === id); if (e) { e.result = 'declined'; saveStore() } }
-app.post('/api/calls/reject', wrap(async (req, res) => { await rejectCall(req.body.id, req.body.from); res.json({ ok: true }) }))
-
-app.get('/api/statuses', (_, res) => {
-  const now = Date.now() / 1000, by = new Map()
-  for (const m of store.statuses) {
-    if (tsOf(m.messageTimestamp) < now - DAY) continue
-    const p = parseMessage(m, 'status@broadcast'); if (!p) continue
-    const who = m.key.fromMe ? me : canon(m.key.participant) || m._poster
-    p.sender = undefined
-    if (!by.has(who)) by.set(who, { jid: who, name: m.key.fromMe ? 'Meu status' : nameOf(who), mine: !!m.key.fromMe, items: [] })
-    by.get(who).items.push(p)
-  }
-  const out = [...by.values()].map((g) => ({ ...g, last: Math.max(...g.items.map((i) => i.ts)) }))
-  out.forEach((g) => g.items.sort((a, b) => a.ts - b.ts)); out.sort((a, b) => (b.mine - a.mine) || b.last - a.last)
-  res.json(out)
-})
-const statusAudience = () => [...new Set([...Object.keys(store.contacts), ...Object.keys(store.chats)].filter((j) => j.endsWith('@s.whatsapp.net')).concat(me ? [me] : []))]
-async function postStatus(content, opts = {}) {
-  ensureConnected()
-  const sent = await sock.sendMessage('status@broadcast', content, { statusJidList: statusAudience(), ...opts })
-  sent.key.participant ||= me; addStatus(sent); return sent?.key?.id
-}
-app.post('/api/status/text', wrap(async (req, res) => {
-  const { text, bg, font } = req.body
-  if (!text?.trim()) throw new Error('Escreva algo para o status')
-  res.json({ ok: true, id: await postStatus({ text }, { backgroundColor: bg || '#128C7E', font: font ?? 0 }) })
-}))
-app.post('/api/status/media', rawBody, wrap(async (req, res) => {
-  const mime = (req.headers['content-type'] || '').split(';')[0], caption = req.query.caption || '', th = thumbOf(req)
-  const content = mime.startsWith('video/') ? { video: req.body, caption, mimetype: mime, ...th } : { image: req.body, caption, mimetype: mime, ...th }
-  res.json({ ok: true, id: await postStatus(content) })
-}))
-
-app.post('/api/groups', wrap(async (req, res) => {
-  ensureConnected()
-  const { subject, participants } = req.body
-  if (!subject?.trim() || !(participants || []).length) throw new Error('Informe o nome do grupo e ao menos um participante')
-  const g = await sock.groupCreate(subject.trim(), participants)
-  upsertChat(g.id, { name: g.subject || subject, lastTs: Math.floor(Date.now() / 1000) }); saveStore(); notifyChats()
-  res.json({ ok: true, id: g.id, name: g.subject || subject })
-}))
-app.get('/api/lists', (_, res) => res.json(store.lists.map((l) => ({ ...l, members: l.members.map((id) => ({ id, name: nameOf(id) })) }))))
-app.post('/api/lists', wrap(async (req, res) => {
-  const { name, members } = req.body
-  if (!name?.trim() || !(members || []).length) throw new Error('Dê um nome à lista e escolha ao menos um contato')
-  const l = { id: 'bl-' + randomBytes(4).toString('hex'), name: name.trim(), members: members.map(canon), history: [] }
-  store.lists.push(l); saveStore(); res.json({ ok: true, id: l.id })
-}))
-app.delete('/api/lists/:id', (req, res) => { store.lists = store.lists.filter((l) => l.id !== req.params.id); saveStore(); res.json({ ok: true }) })
-app.post('/api/lists/:id/send', wrap(async (req, res) => {
-  const l = store.lists.find((x) => x.id === req.params.id); if (!l) throw new Error('Lista não encontrada')
-  if (!req.body.text?.trim()) throw new Error('Mensagem vazia')
-  let ok = 0
-  for (const jid of l.members) { try { await sendTo(jid, { text: req.body.text }); ok++ } catch (e) { console.log('lista', e.message) } }
-  l.history.push({ text: req.body.text, ts: Math.floor(Date.now() / 1000), ok, total: l.members.length }); l.history = l.history.slice(-50); saveStore()
-  res.json({ ok: true, sent: ok, total: l.members.length })
-}))
-
-app.get('/api/profile', wrap(async (_, res) => {
-  const out = { name: myName, number: fmtNumber(me), me, about: '', privacy: {}, blocked: store.blocked.map((id) => ({ id, name: nameOf(id) })), cfg: store.cfg }
-  if (status === 'open') {
-    try { const r = await sock.fetchStatus(me); const s = Array.isArray(r) ? r[0]?.status : r?.status; out.about = s?.status || '' } catch {}
-    try { out.privacy = await sock.fetchPrivacySettings(true) } catch {}
-  }
-  res.json(out)
-}))
-app.post('/api/profile', wrap(async (req, res) => {
-  ensureConnected()
-  if (req.body.name != null) { await sock.updateProfileName(req.body.name); myName = req.body.name }
-  if (req.body.about != null) await sock.updateProfileStatus(req.body.about)
-  res.json({ ok: true })
-}))
-app.post('/api/profile/photo', rawBody, wrap(async (req, res) => {
-  ensureConnected()
-  await sock.query({ tag: 'iq', attrs: { to: '@s.whatsapp.net', type: 'set', xmlns: 'w:profile:picture' }, content: [{ tag: 'picture', attrs: { type: 'image' }, content: req.body }] })
-  for (const f of fs.readdirSync(AV_DIR)) if (f.startsWith(safe(me))) fs.rmSync(path.join(AV_DIR, f), { force: true })
-  delete store.avMiss[me]; res.json({ ok: true })
-}))
-const PRIV = { last: 'updateLastSeenPrivacy', online: 'updateOnlinePrivacy', profile: 'updateProfilePicturePrivacy', status: 'updateStatusPrivacy', readreceipts: 'updateReadReceiptsPrivacy', groups: 'updateGroupAddPrivacy' }
-app.post('/api/privacy', wrap(async (req, res) => {
-  ensureConnected()
-  const fn = PRIV[req.body.key]; if (!fn) throw new Error('Opção inválida')
-  await sock[fn](req.body.value); res.json({ ok: true })
-}))
-app.post('/api/config', (req, res) => { Object.assign(store.cfg, req.body || {}); saveStore(); res.json(store.cfg) })
-
-const dirSize = (d) => { let n = 0; try { for (const f of fs.readdirSync(d)) n += fs.statSync(path.join(d, f)).size } catch {} return n }
-app.get('/api/cache', (_, res) => res.json({ bytes: dirSize(MEDIA_DIR) + dirSize(AV_DIR) }))
-app.post('/api/cache/clear', (_, res) => { for (const d of [MEDIA_DIR, AV_DIR]) for (const f of fs.readdirSync(d)) fs.rmSync(path.join(d, f), { force: true }); res.json({ ok: true }) })
-
-app.get('/native/events', (req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
-  res.write(`data: ${JSON.stringify({ type: 'state', status })}\n\n`)
-  sse.add(res); req.on('close', () => sse.delete(res))
-})
-app.post('/native/reply', wrap(async (req, res) => { await sendTo(req.body.jid, { text: req.body.text }); nativeEmit({ type: 'read', jid: canon(req.body.jid) }); res.json({ ok: true }) }))
-app.post('/native/read', wrap(async (req, res) => { const jid = canon(req.body.jid); if (store.chats[jid]) store.chats[jid].unread = 0; try { const l = [...(store.messages[jid] || [])].reverse().find((m) => !m.key.fromMe); if (l && status === 'open') await sock.readMessages([l.key]) } catch {} res.json({ ok: true }) }))
-app.post('/native/reject-call', wrap(async (req, res) => { await rejectCall(req.body.id, req.body.from); res.json({ ok: true }) }))
-
-wss.on('connection', (ws) => ws.send(JSON.stringify({ type: 'state', data: getState() })))
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { writeStore(); process.exit(0) })
-process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.message || e))
-process.on('uncaughtException', (e) => console.error('uncaughtException:', e?.message || e))
-server.on('error', (e) => console.error('[server] erro no servidor HTTP:', e.message))
-server.listen(PORT, HOST, () => console.log(`Servidor em http://${HOST}:${PORT}`))
-maybeAutoStart().catch((e) => console.error('Falha ao iniciar sessão automática:', e))
