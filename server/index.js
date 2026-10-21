@@ -250,7 +250,7 @@ setInterval(() => nativeEmit({ type: 'ping' }), 25000).unref?.()
 
 /* ============================== Conexão WhatsApp ============================== */
 let sock = null, status = 'connecting', me = null, myName = '', pairCode = null
-let qrWaiters = [], qrReady = false, reconnectTimer = null, retries = 0
+let qrWaiters = [], qrReady = false, reconnectTimer = null, retries = 0, lastErr = ''
 const getState = () => ({ status, me, name: myName, pairCode })
 const setStatus = (s, extra = {}) => { status = s; if ('pairCode' in extra) pairCode = extra.pairCode; broadcast('state', getState()); nativeEmit({ type: 'state', status: s }) }
 const BROWSERS = { macdesktop: () => Browsers.macOS('Desktop'), chrome: () => Browsers.macOS('Chrome'), ubuntu: () => Browsers.ubuntu('Chrome'), windows: () => Browsers.windows('Chrome') }
@@ -260,7 +260,7 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
   let version
   if (process.env.NOVERSION) console.log('Usando a versão padrão do Baileys')
-  else try { const r = await fetchLatestBaileysVersion(); version = r.version; console.log('Versão do WhatsApp Web:', version.join('.')) } catch (e) { console.log('Falha ao buscar versão do WhatsApp Web:', e.message) }
+  else try { const r = await Promise.race([fetchLatestBaileysVersion(), new Promise((_, no) => setTimeout(() => no(new Error('tempo esgotado')), 6000))]); version = r.version; console.log('Versão do WhatsApp Web:', version.join('.')) } catch (e) { console.log('Falha ao buscar versão do WhatsApp Web:', e.message) }
 
   const s = makeWASocket({
     ...(version ? { version } : {}), auth: state, logger,
@@ -276,13 +276,14 @@ async function start() {
     if (s !== sock) return
     if (qr) { qrReady = true; qrWaiters.forEach((f) => f()); qrWaiters = [] }
     if (connection === 'open') {
-      retries = 0
+      retries = 0; lastErr = ''
       me = jidNormalizedUser(s.user?.id); myName = s.user?.name || ''
       setStatus('open', { pairCode: null }); console.log('Conectado como', me)
       s.fetchBlocklist().then((l) => { store.blocked = (l || []).map(canon); saveStore() }).catch(() => {})
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
+      lastErr = `${code ?? ''} ${lastDisconnect?.error?.message ?? ''}`.trim()
       console.log('Conexão fechada:', code, '-', lastDisconnect?.error?.message)
       me = null
       if (code === DisconnectReason.loggedOut) {
@@ -389,11 +390,11 @@ app.post('/api/pair', wrap(async (req, res) => {
   if (number.length < 10) throw new Error('Número inválido. Use DDI + DDD + número, ex.: 5511999998888')
   if (!sock || sock.authState.creds.registered) throw new Error('Já existe uma sessão')
   const s = sock
-  if (!qrReady) await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('Tempo esgotado ao iniciar. Tente de novo.')), 20000)
-    qrWaiters.push(() => { clearTimeout(t); resolve() })
-  })
-  const code = (await s.requestPairingCode(number)).match(/.{1,4}/g).join('-')
+  const limit = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), ms))])
+  let raw
+  try { raw = await limit(s.requestPairingCode(number), 40000) }
+  catch (e) { throw new Error('Não foi possível conectar ao WhatsApp' + (lastErr ? ` (${lastErr})` : ' — verifique a internet do aparelho') + '. Tente de novo.') }
+  const code = raw.match(/.{1,4}/g).join('-')
   setStatus('pairing', { pairCode: code }); res.json({ code })
 }))
 app.post('/api/logout', wrap(async (_, res) => { try { await sock?.logout() } catch {} res.json({ ok: true }) }))
