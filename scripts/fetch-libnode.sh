@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Baixa o Node.js para Android (nodejs-mobile) usado pelo APK.
 set -euo pipefail
-V="v20.20.2"
+V="v18.16.0"
 DEST="android/app/libnode"
 if [ -f "$DEST/bin/arm64-v8a/libnode.so" ]; then echo "libnode já presente"; exit 0; fi
 mkdir -p "$DEST"
