@@ -450,28 +450,20 @@ app.post('/api/pair', wrap(async (req, res) => {
     }
   }
 
-  console.log('[pair] Aguardando o socket WebSocket estabelecer conexão com a Meta...')
-  let attempts = 0
-  while ((!sock?.ws || sock.ws.readyState !== 1) && attempts < 50) {
-    await new Promise((r) => setTimeout(r, 200))
-    attempts++
-  }
-  console.log(`[pair] Node no APK: ${process.version} | ws.readyState: ${sock?.ws?.readyState}`)
+  console.log('[pair] Aguardando estabilização da conexão (5s)...')
+  // Tempo de segurança universal compatível com PC e Android (nodejs-mobile)
+  await new Promise((r) => setTimeout(r, 5000))
 
-  const s = sock
-  if (!s || !sock?.ws || sock.ws.readyState !== 1) {
-    throw new Error(`Socket não foi inicializado (Estado do WS: ${sock?.ws?.readyState ?? 'indefinido'}).`)
-  }
   const s = sock
   if (!s) throw new Error('Socket não inicializado.')
 
   const limit = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), ms))])
   let raw
   try { 
-    raw = await limit(s.requestPairingCode(number), 40000) 
+    raw = await limit(s.requestPairingCode(number), 45000) 
   } catch (e) {
     const reason = lastErr || e.message || 'sessão inválida'
-    throw new Error('Não foi possível conectar ao WhatsApp (' + reason + '). Tente de novo.')
+    throw new Error('Não foi possível conectar ao WhatsApp (' + reason + '). Verifique sua internet.')
   }
   const code = raw.match(/.{1,4}/g).join('-')
   setStatus('pairing', { pairCode: code }); res.json({ code })
