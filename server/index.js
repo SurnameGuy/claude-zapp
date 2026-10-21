@@ -1,3 +1,5 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+process.env.NODE_OPTIONS = "--no-warnings";
 import { webcrypto } from 'node:crypto'
 if (!globalThis.crypto) globalThis.crypto = webcrypto
 import makeWASocket, {
@@ -320,7 +322,7 @@ async function start() {
       console.log('Conexão fechada:', code, '-', lastDisconnect?.error?.message)
       me = null
 
-      const stale = code === DisconnectReason.loggedOut || /stale|invalid session|bad session|connection terminated/i.test(lastErr)
+      const stale = code === DisconnectReason.loggedOut || code === 401 || /stale|invalid session|bad session|connection terminated|unauthorized/i.test(lastErr)
       if (stale) {
         resetStaleSession(lastErr || `code:${code}`)
         return
