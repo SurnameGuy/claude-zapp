@@ -2,6 +2,10 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 process.env.NODE_OPTIONS = "--no-warnings";
 import { webcrypto } from 'node:crypto'
 if (!globalThis.crypto) globalThis.crypto = webcrypto
+import { WebSocket } from 'ws'
+if (!globalThis.WebSocket) {
+  globalThis.WebSocket = WebSocket
+}
 import makeWASocket, {
   useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, BufferJSON,
   downloadMediaMessage, normalizeMessageContent, getContentType, jidNormalizedUser,
