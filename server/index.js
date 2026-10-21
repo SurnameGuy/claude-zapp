@@ -1,10 +1,9 @@
-const dns = require('dns');
+process.env.NODE_OPTIONS = "--no-warnings";
+import dns from 'node:dns';
 if (dns.setDefaultResultOrder) {
     dns.setDefaultResultOrder('ipv4first');
 }
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-process.env.NODE_OPTIONS = "--no-warnings";
-import dns from 'node:dns';
 import net from 'node:net';
 dns.setDefaultResultOrder('ipv4first');
 net.setDefaultAutoSelectFamily(false);
