@@ -259,6 +259,10 @@ const setStatus = (s, extra = {}) => { status = s; if ('pairCode' in extra) pair
 const BROWSERS = { macdesktop: () => Browsers.macOS('Desktop'), chrome: () => Browsers.macOS('Chrome'), ubuntu: () => Browsers.ubuntu('Chrome'), windows: () => Browsers.windows('Chrome') }
 
 function resetStaleSession(reason = '') {
+  if (status === 'unpaired' || status === 'connecting') {
+    console.log('[session] Ignorando reset prematuro durante a conexão inicial:', reason || '')
+    return
+  }
   console.log('[session] resetando sessão quebrada', reason || '')
   if (sock) {
     try { sock.ev?.removeAllListeners?.() } catch {}
@@ -450,9 +454,12 @@ app.post('/api/pair', wrap(async (req, res) => {
     }
   }
 
-  console.log('[pair] Aguardando estabilização da conexão (5s)...')
-  // Tempo de segurança universal compatível com PC e Android (nodejs-mobile)
-  await new Promise((r) => setTimeout(r, 5000))
+  console.log('[pair] Aguardando o socket WebSocket estabelecer conexão com a Meta...')
+  let attempts = 0
+  while ((!sock?.ws || sock.ws.readyState !== 1) && attempts < 50) {
+    await new Promise((r) => setTimeout(r, 200))
+    attempts++
+  }
 
   const s = sock
   if (!s) throw new Error('Socket não inicializado.')
@@ -460,10 +467,10 @@ app.post('/api/pair', wrap(async (req, res) => {
   const limit = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), ms))])
   let raw
   try { 
-    raw = await limit(s.requestPairingCode(number), 45000) 
+    raw = await limit(s.requestPairingCode(number), 40000) 
   } catch (e) {
     const reason = lastErr || e.message || 'sessão inválida'
-    throw new Error('Não foi possível conectar ao WhatsApp (' + reason + '). Verifique sua internet.')
+    throw new Error('Não foi possível conectar ao WhatsApp (' + reason + '). Tente de novo.')
   }
   const code = raw.match(/.{1,4}/g).join('-')
   setStatus('pairing', { pairCode: code }); res.json({ code })
