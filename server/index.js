@@ -306,8 +306,9 @@ async function start() {
   else try { const r = await Promise.race([fetchLatestBaileysVersion(), new Promise((_, no) => setTimeout(() => no(new Error('tempo esgotado')), 6000))]); version = r.version; console.log('Versão do Baileys:', version) } catch (e) { console.log('Não foi possível obter a versão do Baileys:', e.message) }
 
   const s = makeWASocket({
-    ...(version ? { version } : {}), auth: state, logger,
-    browser: BROWSERS[process.env.BROWSER || 'chrome'](),
+    auth: state,
+    version: [2, 3000, 1015901307],
+    browser: ['Chrome (Linux)', 'Chrome', '120.0.0.0'],
     syncFullHistory: !process.env.NOHISTORY, shouldSyncHistoryMessage: () => true,
     markOnlineOnConnect: false, getMessage: async () => undefined,
   })
