@@ -1,5 +1,8 @@
 # Zapp
 
+- PC FUNCIONANDO
+- APK/MOBILE COM ERROS, AINDA NÃO FUNCIONANDO
+
 Cliente para o recurso **Aparelhos conectados** do WhatsApp, com visual de iPhone. Roda como **app Android (APK)**: o servidor
 (Node.js + Baileys) vai embutido dentro do app, então **não precisa de Termux, terminal ou computador ligado**.
 
