@@ -97,7 +97,7 @@ function nameOf(jid) {
   const alt = store.alt[jid]
   return store.contacts[jid] || store.contacts[alt] || store.chats[jid]?.name || store.notify[jid] || store.notify[alt] || (jid.endsWith('@g.us') ? 'Grupo' : fmtNumber(jid) || 'Contato')
 }
-const mediaLabel = (t) => ({ image: '📷 Foto', video: '🎥 Vídeo', audio: '🎤 Áudio', document: '📄 Documento', sticker: 'Figurinha', location: '📍 Localização', contact: '👤 Contato' })[t] || '📎 Arquivo'
+const mediaLabel = (t) => ({ image: '📷 Foto', video: '🎥 Vídeo', audio: '🎤 Áudio', document: '📄 Documento', sticker: 'Figurinha', location: '📍 Localização', contact: '👤 Conta', poll: '📊 Enquete' })[t] || 'Arquivo'
 
 const SKIP = new Set(['protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'reactionMessage', 'keepInChatMessage'])
 const VO = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension']
@@ -252,7 +252,7 @@ const sse = new Set()
 const nativeEmit = (o) => { const s = `data: ${JSON.stringify(o)}\n\n`; for (const r of sse) r.write(s) }
 setInterval(() => nativeEmit({ type: 'ping' }), 25000).unref?.()
 
-let sock = null, status = 'connecting', me = null, myName = '', pairCode = null
+let sock = null, status = 'unpaired', me = null, myName = '', pairCode = null
 let qrWaiters = [], qrReady = false, reconnectTimer = null, retries = 0, lastErr = ''
 const getState = () => ({ status, me, name: myName, pairCode })
 const setStatus = (s, extra = {}) => { status = s; if ('pairCode' in extra) pairCode = extra.pairCode; broadcast('state', getState()); nativeEmit({ type: 'state', status: s }) }
@@ -289,7 +289,7 @@ async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
   let version
   if (process.env.NOVERSION) console.log('Usando a versão padrão do Baileys')
-  else try { const r = await Promise.race([fetchLatestBaileysVersion(), new Promise((_, no) => setTimeout(() => no(new Error('tempo esgotado')), 6000))]); version = r.version; console.log('Versão do WhatsApp Web:', version.join('.')) } catch (e) { console.log('Falha ao buscar versão do WhatsApp Web:', e.message) }
+  else try { const r = await Promise.race([fetchLatestBaileysVersion(), new Promise((_, no) => setTimeout(() => no(new Error('tempo esgotado')), 6000))]); version = r.version; console.log('Versão do Baileys:', version) } catch (e) { console.log('Não foi possível obter a versão do Baileys:', e.message) }
 
   const s = makeWASocket({
     ...(version ? { version } : {}), auth: state, logger,
@@ -365,7 +365,7 @@ async function start() {
       broadcast('message', { chat: chatView(p.jid), message: p })
       const ch = store.chats[p.jid]
       if (type === 'notify' && !p.fromMe && (store.cfg.notif ?? true) && !((ch?.mutedUntil || 0) > Date.now() / 1000) && !store.blocked.includes(p.jid))
-        nativeEmit({ type: 'msg', id: p.id, jid: p.jid, chat: nameOf(p.jid), group: p.jid.endsWith('@g.us'), sender: p.sender, ts: p.ts, text: store.cfg.previews === false ? 'Nova mensagem' : p.text || '' })
+        nativeEmit({ type: 'msg', id: p.id, jid: p.jid, chat: nameOf(p.jid), group: p.jid.endsWith('@g.us'), sender: p.sender, ts: p.ts, text: store.cfg.previews === false ? 'Nova mensagem' : p.text || mediaLabel(p.type) })
     }
   })
   s.ev.on('messages.update', (ups) => {
@@ -387,7 +387,7 @@ async function start() {
     for (const ev of events) {
       const jid = canon(ev.groupJid || ev.chatId || ev.from)
       let e = store.calls.find((x) => x.id === ev.id)
-      if (!e) { e = { id: ev.id, jid, from: ev.from, isVideo: !!ev.isVideo, isGroup: !!ev.isGroup, ts: Math.floor(new Date(ev.date).getTime() / 1000) || Math.floor(Date.now() / 1000), result: 'ringing' } }
+      if (!e) { e = { id: ev.id, jid, from: ev.from, isVideo: !!ev.isVideo, isGroup: !!ev.isGroup, ts: Math.floor(new Date(ev.date).getTime() / 1000) || Math.floor(Date.now() / 1000), result: 'missed' } }
       if (ev.status === 'accept') { e.accepted = true; e.result = 'answered' }
       else if (ev.status === 'reject') e.result = e.accepted ? 'answered' : 'declined'
       else if (ev.status === 'timeout') e.result = e.accepted ? 'answered' : 'missed'
@@ -404,18 +404,21 @@ async function maybeAutoStart() {
   const credsFile = path.join(AUTH_DIR, 'creds.json')
   if (!fs.existsSync(credsFile)) {
     console.log('[server] sem sessão persistida: aguardando emparelhamento')
+    setStatus('unpaired', { pairCode: null })
     return
   }
   try {
     const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'))
     if (!creds?.registered) {
       console.log('[server] sessão persistida encontrada, mas não registrada: aguardando emparelhamento')
+      setStatus('unpaired', { pairCode: null })
       return
     }
     console.log('[server] sessão persistida encontrada: iniciando conexão automática')
     await start()
   } catch (e) {
     console.log('[server] auth persistida inválida; aguardando novo emparelhamento:', e.message)
+    setStatus('unpaired', { pairCode: null })
   }
 }
 
@@ -502,7 +505,7 @@ app.post('/api/chats/:jid/action', wrap(async (req, res) => {
 }))
 app.get('/api/chats/:jid/export', (req, res) => {
   const jid = canon(req.params.jid)
-  const lines = (store.messages[jid] || []).map((m) => parseMessage(m, jid)).filter(Boolean).map((p) => `[${new Date(p.ts * 1000).toLocaleString('pt-BR')}] ${p.fromMe ? 'Você' : p.sender || nameOf(jid)}: ${p.text || mediaLabel(p.type) || ''}`)
+  const lines = (store.messages[jid] || []).map((m) => parseMessage(m, jid)).filter(Boolean).map((p) => `[${new Date(p.ts * 1000).toLocaleString('pt-BR')}] ${p.fromMe ? 'Você' : p.sender || nameOf(jid)}: ${p.text || mediaLabel(p.type)}`)
   res.setHeader('Content-Type', 'text/plain; charset=utf-8')
   res.setHeader('Content-Disposition', `attachment; filename="Conversa com ${safe(nameOf(jid))}.txt"`)
   res.send(lines.join('\n'))
@@ -520,9 +523,9 @@ app.post('/api/resolve', wrap(async (req, res) => {
 }))
 app.get('/api/info/:jid', wrap(async (req, res) => {
   const jid = canon(req.params.jid), isGroup = jid.endsWith('@g.us')
-  const out = { id: jid, name: nameOf(jid), number: fmtNumber(jid), isGroup, blocked: store.blocked.includes(jid), muted: (store.chats[jid]?.mutedUntil || 0) > Date.now() / 1000, pinned: !!store.chats[jid]?.pinned, archived: !!store.chats[jid]?.archived, ephemeral: store.chats[jid]?.ephemeral || 0 }
+  const out = { id: jid, name: nameOf(jid), number: fmtNumber(jid), isGroup, blocked: store.blocked.includes(jid), muted: (store.chats[jid]?.mutedUntil || 0) > Date.now() / 1000, pinned: !!store.chats[jid]?.pinned }
   const msgs = (store.messages[jid] || []).map((m) => parseMessage(m, jid)).filter(Boolean)
-  out.counts = { media: msgs.filter((m) => ['image', 'video'].includes(m.type)).length, docs: msgs.filter((m) => m.type === 'document').length, links: msgs.filter((m) => /https?:\/\//.test(m.text || '')).length }
+  out.counts = { media: msgs.filter((m) => ['image', 'video'].includes(m.type)).length, docs: msgs.filter((m) => m.type === 'document').length, links: msgs.filter((m) => /https?:\/\//.test(m.text)).length }
   if (status === 'open') {
     if (isGroup) {
       try {
@@ -531,7 +534,7 @@ app.get('/api/info/:jid', wrap(async (req, res) => {
         out.participants = g.participants.map((p) => { const id = canon(p.jid || p.id); return { id, name: id === me ? 'Você' : nameOf(id), admin: !!p.admin, number: fmtNumber(id) } })
       } catch {}
     } else {
-      try { const r = await sock.fetchStatus(jid); const s = Array.isArray(r) ? r[0]?.status : r?.status; out.about = s?.status || ''; out.aboutAt = s?.setAt ? new Date(s.setAt).getTime() / 1000 : 0 } catch {}
+      try { const r = await sock.fetchStatus(jid); const s = Array.isArray(r) ? r[0]?.status : r?.status; out.about = s?.status || ''; out.aboutAt = s?.setAt ? new Date(s.setAt).getTime() / 1000 : undefined } catch {}
       try { const b = await sock.getBusinessProfile(jid); if (b) out.business = { description: b.description, category: b.category, website: (b.website || [])[0], email: b.email, address: b.address } } catch {}
     }
   }
@@ -566,7 +569,7 @@ function afterSend(jid, sent) {
 const quotedOpt = (jid, id) => { const q = id && rawOf(jid, id); return q ? { quoted: q } : {} }
 async function sendTo(jid, content, opts = {}) { ensureConnected(); jid = canon(jid); return afterSend(jid, await sock.sendMessage(jid, content, opts)) }
 const mediaFile = (id) => path.join(MEDIA_DIR, safe(id))
-const thumbOf = (req) => { const t = req.headers['x-thumb'], d = String(req.headers['x-dim'] || '').split('x').map(Number); return { ...(t ? { jpegThumbnail: Buffer.from(t, 'base64') } : {}), ...(d[0] && d[1] ? { width: d[0], height: d[1] } : {}) } }
+const thumbOf = (req) => { const t = req.headers['x-thumb'], d = String(req.headers['x-dim'] || '').split('x').map(Number); return { ...(t ? { jpegThumbnail: Buffer.from(t, 'base64') } : {}), ...((d[0] && d[1]) ? { width: d[0], height: d[1] } : {}) } 
 
 app.post('/api/send', wrap(async (req, res) => {
   const { jid, text, quotedId } = req.body
@@ -727,8 +730,7 @@ app.get('/api/media/:jid/:id', async (req, res) => {
       if (!inflight.has(raw.key.id)) inflight.set(raw.key.id, downloadRaw(raw).finally(() => inflight.delete(raw.key.id)))
       await inflight.get(raw.key.id)
     }
-    res.type((p.mime || 'application/octet-stream').split(';')[0]).set({ 'Content-Disposition': `inline; filename="${encodeURIComponent(p.fileName || p.id)}"`, 'Cache-Control': 'private, max-age=3600' })
-    res.sendFile(f)
+    res.type((p.mime || 'application/octet-stream').split(';')[0]).set({ 'Content-Disposition': `inline; filename="${encodeURIComponent(p.fileName || p.id)}"`, 'Cache-Control': 'private, max-age=3600' }).sendFile(f)
   } catch (e) { res.status(500).send('Não foi possível baixar a mídia: ' + e.message) }
 })
 
@@ -812,7 +814,7 @@ app.post('/api/profile/photo', rawBody, wrap(async (req, res) => {
   for (const f of fs.readdirSync(AV_DIR)) if (f.startsWith(safe(me))) fs.rmSync(path.join(AV_DIR, f), { force: true })
   delete store.avMiss[me]; res.json({ ok: true })
 }))
-const PRIV = { last: 'updateLastSeenPrivacy', online: 'updateOnlinePrivacy', profile: 'updateProfilePicturePrivacy', status: 'updateStatusPrivacy', readreceipts: 'updateReadReceiptsPrivacy', groups: 'updateGroupsPrivacy' }
+const PRIV = { last: 'updateLastSeenPrivacy', online: 'updateOnlinePrivacy', profile: 'updateProfilePicturePrivacy', status: 'updateStatusPrivacy', readreceipts: 'updateReadReceiptsPrivacy', groups: 'updateGroupAddPrivacy' }
 app.post('/api/privacy', wrap(async (req, res) => {
   ensureConnected()
   const fn = PRIV[req.body.key]; if (!fn) throw new Error('Opção inválida')
@@ -830,7 +832,7 @@ app.get('/native/events', (req, res) => {
   sse.add(res); req.on('close', () => sse.delete(res))
 })
 app.post('/native/reply', wrap(async (req, res) => { await sendTo(req.body.jid, { text: req.body.text }); nativeEmit({ type: 'read', jid: canon(req.body.jid) }); res.json({ ok: true }) }))
-app.post('/native/read', wrap(async (req, res) => { const jid = canon(req.body.jid); if (store.chats[jid]) store.chats[jid].unread = 0; try { const l = [...(store.messages[jid] || [])].reverse().find((m) => !m.key.fromMe); if (l && status === 'open') await sock.readMessages([l.key]) } catch {} saveStore(); notifyChats(); res.json({ ok: true }) }))
+app.post('/native/read', wrap(async (req, res) => { const jid = canon(req.body.jid); if (store.chats[jid]) store.chats[jid].unread = 0; try { const l = [...(store.messages[jid] || [])].reverse().find((m) => !m.key.fromMe); if (l && status === 'open') await sock.readMessages([l.key]) } catch {} res.json({ ok: true }) }))
 app.post('/native/reject-call', wrap(async (req, res) => { await rejectCall(req.body.id, req.body.from); res.json({ ok: true }) }))
 
 wss.on('connection', (ws) => ws.send(JSON.stringify({ type: 'state', data: getState() })))
