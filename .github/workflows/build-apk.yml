@@ -53,8 +53,10 @@ jobs:
         with:
           gradle-version: 8.7
 
-      - name: Dependências do servidor
-        run: npm ci --no-audit --no-fund
+      - name: Dependências do servidor (Instalação Limpa)
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --no-audit --no-fund
 
       - name: Node.js para Android
         run: bash scripts/fetch-libnode.sh
