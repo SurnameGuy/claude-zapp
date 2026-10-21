@@ -147,6 +147,7 @@ async function storageScreen() {
 function aboutScreen() {
   openScreen('Ajuda e informações', (body) => body.append(
     h('div', { class: 'hero', style: 'padding-top:30px' }, h('div', { class: 'logo', style: 'width:96px;height:96px;box-shadow:none', html: ic('logo-whatsapp', 56) }), h('h2', {}, 'WhatsApp'), h('p', {}, 'Cliente para aparelhos vinculados · versão 1.0')),
+    NA()?.showDiagnostics ? h('div', { class: 'gbox' }, srow('Diagnóstico', 'reader-outline', '#8E8E93', null, () => NA().showDiagnostics())) : null,
     h('div', { class: 'gbox' }, srow('Aparelho vinculado', 'phone-portrait-outline', '#34C759', S.st === 'open' ? 'Conectado' : 'Desconectado', null), srow('Número', 'call-outline', '#007AFF', fmtPhone(S.me), null)),
     h('div', { class: 'gfoot', style: 'margin-top:10px' }, 'Este app usa o recurso “Aparelhos conectados” do WhatsApp, como o WhatsApp Web. Mensagens de visualização única só podem ser abertas no celular.')), { backLabel: 'Ajustes' })
 }

@@ -24,6 +24,7 @@ const STORE_FILE = path.join(DATA, 'store.json')
 const MAX_MSGS = 300, DAY = 86400
 for (const d of [DATA, MEDIA_DIR, AV_DIR]) fs.mkdirSync(d, { recursive: true })
 
+console.log('[server] iniciando · Node', process.version, '· dados em', DATA)
 const noop = () => {}
 const logger = process.env.LOG
   ? new Proxy({ level: 'debug', child() { return logger } }, { get: (t, k) => t[k] ?? ((...a) => console.log(String(k), ...a)) })
@@ -786,5 +787,6 @@ wss.on('connection', (ws) => ws.send(JSON.stringify({ type: 'state', data: getSt
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { writeStore(); process.exit(0) })
 process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.message || e))
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e?.message || e))
+server.on('error', (e) => console.error('[server] erro no servidor HTTP:', e.message))
 server.listen(PORT, HOST, () => console.log(`Servidor em http://${HOST}:${PORT}`))
 start().catch((e) => console.error('Falha ao iniciar:', e))

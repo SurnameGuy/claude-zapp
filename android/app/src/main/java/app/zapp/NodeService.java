@@ -28,6 +28,8 @@ public class NodeService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        Diag.installCrashHandler(this);
+        Diag.log(this, "NodeService.onCreate");
         try {
             Notifier.channels(this);
             Notification n = Notifier.foreground(this, "Iniciando…");
@@ -36,7 +38,7 @@ public class NodeService extends Service {
         } catch (Throwable e) {
             // Android 12+ recusa foreground service iniciado em segundo plano (ex.: reinício automático após um crash).
             // Antes isso derrubava o app em loop ("falhas constantes"); agora o serviço só desiste.
-            android.util.Log.e("zapp", "startForeground recusado", e);
+            Diag.log(this, "startForeground recusado: " + e);
             dead = true;
             stopSelf();
             return;
@@ -49,8 +51,9 @@ public class NodeService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        Diag.log(this, "NodeService.onStartCommand");
         if (dead) return START_NOT_STICKY;
-        try { NodeBridge.start(this); } catch (Throwable e) { android.util.Log.e("zapp", "Falha ao iniciar o Node", e); }
+        try { NodeBridge.start(this); } catch (Throwable e) { Diag.log(this, "Falha ao iniciar o Node: " + e); }
         if (sse == null) {
             sse = new Thread(new Runnable() { @Override public void run() { loop(); } }, "zapp-events");
             sse.setDaemon(true);

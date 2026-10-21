@@ -3,6 +3,7 @@
 #include <android/log.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -13,6 +14,7 @@
 #define TAG "zapp-node"
 
 static int pipes[2];
+static FILE* logFile = nullptr;
 static void* logThread(void*) {
     char buf[2048];
     ssize_t n;
@@ -20,12 +22,17 @@ static void* logThread(void*) {
         if (n > 0 && buf[n - 1] == '\n') n--;
         buf[n] = '\0';
         __android_log_write(ANDROID_LOG_INFO, TAG, buf);
+        if (logFile) { fwrite(buf, 1, (size_t)n, logFile); fputc('\n', logFile); fflush(logFile); }
     }
     return nullptr;
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_app_zapp_NodeBridge_redirectLogs(JNIEnv*, jclass) {
+Java_app_zapp_NodeBridge_redirectLogs(JNIEnv* env, jclass, jstring path) {
+    if (path != nullptr) {
+        const char* cp = env->GetStringUTFChars(path, nullptr);
+        if (cp) { logFile = fopen(cp, "a"); env->ReleaseStringUTFChars(path, cp); }
+    }
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);
     if (pipe(pipes) != 0) return;
@@ -118,6 +125,7 @@ Java_app_zapp_NodeBridge_startNode(JNIEnv* env, jclass, jobjectArray arguments) 
 
     argv[argc] = nullptr;
 
+    printf("[native] chamando node::Start com %d argumentos\n", (int)argc);
     for (int sig : kGuarded) sigaction(sig, nullptr, &savedActs[sig]);
     pthread_t g;
     if (pthread_create(&g, nullptr, signalGuard, nullptr) == 0) pthread_detach(g);

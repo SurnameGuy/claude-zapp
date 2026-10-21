@@ -14,30 +14,44 @@ import java.io.OutputStream;
 final class NodeBridge {
     private static boolean started = false;
 
-    static {
-        System.loadLibrary("node");
-        System.loadLibrary("zapp-native");
+    private static boolean libsLoaded = false;
+
+    /** Carrega as bibliotecas nativas; se falhar, registra o motivo em vez de derrubar o app. */
+    private static synchronized boolean loadLibs(Context c) {
+        if (libsLoaded) return true;
+        try {
+            System.loadLibrary("node");
+            System.loadLibrary("zapp-native");
+            libsLoaded = true;
+            Diag.log(c, "bibliotecas nativas carregadas (node + zapp-native)");
+        } catch (Throwable e) {
+            Diag.log(c, "FALHA ao carregar biblioteca nativa: " + e);
+        }
+        return libsLoaded;
     }
 
     private NodeBridge() {}
 
     static native int startNode(String[] args);
     static native void setEnv(String key, String value);
-    static native void redirectLogs();
+    static native void redirectLogs(String path);
 
     static synchronized void start(final Context ctx) {
         if (started) return;
         started = true;
         final Context app = ctx.getApplicationContext();
+        if (!loadLibs(app)) { started = false; return; }
         // Tudo roda na thread "node" (4 MB de pilha): a cópia dos assets não trava mais a thread principal.
         Thread t = new Thread(null, new Runnable() {
             @Override public void run() {
                 try {
                     File root = new File(app.getFilesDir(), "app");
+                    Diag.log(app, "copiando arquivos do app…");
                     copyIfNeeded(app, root);
                     File data = new File(app.getFilesDir(), "userdata");
                     data.mkdirs();
-                    redirectLogs();
+                    Diag.rotateNodeLog(app);
+                    redirectLogs(Diag.nodeLog(app).getPath());
                     setEnv("WA_ROOT", root.getPath());
                     setEnv("WA_PUBLIC", new File(root, "public").getPath());
                     setEnv("WA_DATA", data.getPath());
@@ -45,10 +59,11 @@ final class NodeBridge {
                     setEnv("PORT", String.valueOf(Cfg.PORT));
                     setEnv("HOME", app.getFilesDir().getPath());
                     setEnv("TMPDIR", app.getCacheDir().getPath());
-                    int code = startNode(new String[]{"node", "--max-old-space-size=384", new File(root, "server.cjs").getPath()});
-                    android.util.Log.e("zapp", "Node terminou com código " + code);
+                    Diag.log(app, "chamando node::Start (boot.cjs)");
+                    int code = startNode(new String[]{"node", "--max-old-space-size=384", new File(root, "boot.cjs").getPath()});
+                    Diag.log(app, "node::Start retornou com código " + code);
                 } catch (Throwable e) {
-                    android.util.Log.e("zapp", "Falha ao iniciar o Node", e);
+                    Diag.log(app, "Falha ao iniciar o Node: " + android.util.Log.getStackTraceString(e));
                 }
             }
         }, "node", 4 * 1024 * 1024);
@@ -62,10 +77,11 @@ final class NodeBridge {
         InputStream vin = am.open("version.txt");
         version = new String(Cfg.readAll(vin), "UTF-8").trim();
         SharedPreferences p = app.getSharedPreferences("zapp", Context.MODE_PRIVATE);
-        if (version.equals(p.getString("assets_v", "")) && new File(root, "server.cjs").exists()) return;
+        if (version.equals(p.getString("assets_v", "")) && new File(root, "server.cjs").exists() && new File(root, "boot.cjs").exists()) return;
         deleteRec(new File(root, "public"));
         root.mkdirs();
         copyAsset(am, "server.cjs", new File(root, "server.cjs"));
+        copyAsset(am, "boot.cjs", new File(root, "boot.cjs"));
         copyAsset(am, "public", new File(root, "public"));
         p.edit().putString("assets_v", version).apply();
     }

@@ -3,6 +3,8 @@ package app.zapp;
 import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -30,7 +32,10 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.graphics.Typeface;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ScrollView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -57,17 +62,26 @@ public class MainActivity extends Activity {
     private String geoOrigin;
     private String pendingOpen;
     private boolean pageReady = false;
+    private FrameLayout rootView;
+    private View diagView;
+    private volatile boolean serverOk = false;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        Diag.installCrashHandler(this);
+        final boolean crashedBefore = Diag.marker(this).exists();
+        try { new java.io.FileOutputStream(Diag.marker(this)).close(); } catch (Exception ignored) { }
+        Diag.log(this, "MainActivity.onCreate (queda anterior: " + crashedBefore + ")");
         FrameLayout root = new FrameLayout(this);
+        rootView = root;
         web = new WebView(this);
         setupWebView();
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         splash = buildSplash();
         root.addView(splash, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
+        if (crashedBefore) showDiag("O app foi encerrado antes de terminar de iniciar na última vez. Copie o relatório abaixo e envie para quem está ajudando.");
 
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
@@ -218,14 +232,80 @@ public class MainActivity extends Activity {
                         HttpURLConnection h = Cfg.open(MainActivity.this, "/api/state", "GET");
                         h.setReadTimeout(2000);
                         if (h.getResponseCode() == 200) {
+                            serverOk = true;
+                            Diag.marker(MainActivity.this).delete();
+                            Diag.log(MainActivity.this, "servidor respondeu OK");
                             runOnUiThread(new Runnable() { @Override public void run() { loadApp(); } });
                             return;
                         }
                     } catch (Exception ignored) { }
+                    if (i == 50) runOnUiThread(new Runnable() { @Override public void run() { if (!serverOk) showDiag("O servidor interno não respondeu em 25 segundos."); } });
                     try { Thread.sleep(500); } catch (InterruptedException ignored) { }
                 }
             }
         }, "wait-server").start();
+    }
+
+    /** Tela de diagnóstico: relatório com logs que o usuário pode copiar ou compartilhar. */
+    private void showDiag(String why) {
+        if (diagView != null) rootView.removeView(diagView);
+        final String report = Diag.report(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackgroundColor(Color.WHITE);
+        box.setPadding(24, 24, 24, 24);
+        TextView title = new TextView(this);
+        title.setText("Diagnóstico");
+        title.setTextSize(22);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextColor(Color.BLACK);
+        TextView why2 = new TextView(this);
+        why2.setText(why);
+        why2.setTextColor(0xFF555555);
+        why2.setPadding(0, 8, 0, 16);
+        ScrollView sv = new ScrollView(this);
+        TextView body = new TextView(this);
+        body.setText(report);
+        body.setTextSize(11);
+        body.setTypeface(Typeface.MONOSPACE);
+        body.setTextColor(Color.BLACK);
+        body.setTextIsSelectable(true);
+        sv.addView(body);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, 16, 0, 0);
+        Button copy = new Button(this); copy.setText("Copiar");
+        Button share = new Button(this); share.setText("Enviar");
+        Button retry = new Button(this); retry.setText("Tentar de novo");
+        Button close = new Button(this); close.setText("Fechar");
+        copy.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("diagnostico", report));
+            Toast.makeText(MainActivity.this, "Relatório copiado", Toast.LENGTH_SHORT).show();
+        } });
+        share.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_TEXT, report);
+            startActivity(Intent.createChooser(i, "Enviar relatório"));
+        } });
+        retry.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            hideDiag();
+            try { startForegroundService(new Intent(MainActivity.this, NodeService.class)); } catch (Exception e) { Diag.log(MainActivity.this, "retry: " + e); }
+            loadApp();
+        } });
+        close.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) { hideDiag(); } });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        row.addView(copy, lp); row.addView(share, lp); row.addView(retry, lp); row.addView(close, lp);
+        box.addView(title); box.addView(why2);
+        box.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        box.addView(row);
+        diagView = box;
+        rootView.addView(box, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private void hideDiag() {
+        if (diagView != null) { rootView.removeView(diagView); diagView = null; }
     }
 
     private void loadApp() { web.loadUrl(Cfg.BASE + "/?k=" + Cfg.token(this)); }
@@ -358,6 +438,11 @@ public class MainActivity extends Activity {
                     }
                 }
             });
+        }
+
+        @JavascriptInterface
+        public void showDiagnostics() {
+            runOnUiThread(new Runnable() { @Override public void run() { showDiag("Relatório solicitado em Ajustes."); } });
         }
 
         @JavascriptInterface
