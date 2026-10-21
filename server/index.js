@@ -456,7 +456,12 @@ app.post('/api/pair', wrap(async (req, res) => {
     await new Promise((r) => setTimeout(r, 200))
     attempts++
   }
+  console.log(`[pair] Node no APK: ${process.version} | ws.readyState: ${sock?.ws?.readyState}`)
 
+  const s = sock
+  if (!s || !sock?.ws || sock.ws.readyState !== 1) {
+    throw new Error(`Socket não foi inicializado (Estado do WS: ${sock?.ws?.readyState ?? 'indefinido'}).`)
+  }
   const s = sock
   if (!s) throw new Error('Socket não inicializado.')
 
