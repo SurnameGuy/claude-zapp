@@ -18,7 +18,7 @@ const PUBLIC = process.env.WA_PUBLIC || path.join(ROOT, 'public')
 const DATA = process.env.WA_DATA || path.join(ROOT, 'userdata')
 const PORT = Number(process.env.PORT || 3000)
 const HOST = process.env.HOST || '127.0.0.1'
-const KEY = process.env.WA_KEY || '' // no APK: token aleatório que protege o servidor local
+const KEY = process.env.WA_KEY || ''
 const AUTH_DIR = path.join(DATA, 'auth'), MEDIA_DIR = path.join(DATA, 'media'), AV_DIR = path.join(DATA, 'avatars')
 const STORE_FILE = path.join(DATA, 'store.json')
 const MAX_MSGS = 300, DAY = 86400
@@ -52,7 +52,6 @@ const numberOf = (jid = '') => jid.split('@')[0].split(':')[0]
 const isIgnored = (j) => !j || j === 'status@broadcast' || j.endsWith('@newsletter') || j.endsWith('@broadcast')
 const safe = (s) => String(s).replace(/[^\w.-]/g, '_')
 
-/* ---- LID <-> número ---- */
 function canon(jid) {
   if (!jid) return jid
   const n = jidNormalizedUser(jid)
@@ -100,7 +99,6 @@ function nameOf(jid) {
 }
 const mediaLabel = (t) => ({ image: '📷 Foto', video: '🎥 Vídeo', audio: '🎤 Áudio', document: '📄 Documento', sticker: 'Figurinha', location: '📍 Localização', contact: '👤 Contato' })[t] || '📎 Arquivo'
 
-/* ============================== Mensagens ============================== */
 const SKIP = new Set(['protocolMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'reactionMessage', 'keepInChatMessage'])
 const VO = ['viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension']
 
@@ -238,7 +236,6 @@ function ensureGroup(jid) {
   sock.groupMetadata(jid).then((g) => { upsertChat(jid, { name: g.subject }); saveStore(); notifyChats() }).catch(() => {})
 }
 
-/* ============================== HTTP + WebSocket ============================== */
 const app = express()
 const server = http.createServer(app)
 const cookieOf = (req) => (req.headers.cookie || '').split(';').map((s) => s.trim()).find((s) => s.startsWith('wak='))?.slice(4)
@@ -255,21 +252,35 @@ const sse = new Set()
 const nativeEmit = (o) => { const s = `data: ${JSON.stringify(o)}\n\n`; for (const r of sse) r.write(s) }
 setInterval(() => nativeEmit({ type: 'ping' }), 25000).unref?.()
 
-/* ============================== Conexão WhatsApp ============================== */
 let sock = null, status = 'connecting', me = null, myName = '', pairCode = null
 let qrWaiters = [], qrReady = false, reconnectTimer = null, retries = 0, lastErr = ''
 const getState = () => ({ status, me, name: myName, pairCode })
 const setStatus = (s, extra = {}) => { status = s; if ('pairCode' in extra) pairCode = extra.pairCode; broadcast('state', getState()); nativeEmit({ type: 'state', status: s }) }
 const BROWSERS = { macdesktop: () => Browsers.macOS('Desktop'), chrome: () => Browsers.macOS('Chrome'), ubuntu: () => Browsers.ubuntu('Chrome'), windows: () => Browsers.windows('Chrome') }
 
-afterSessionReset = () => {
-  if (sock && (sock.authState?.creds?.registered || status === 'open')) {
-    try { sock.end?.(); } catch {}
+function resetStaleSession(reason = '') {
+  console.log('[session] resetando sessão quebrada', reason || '')
+  if (sock) {
+    try { sock.ev?.removeAllListeners?.() } catch {}
+    try { sock.ws?.close?.() } catch {}
   }
+  sock = null
+  me = null
+  myName = ''
+  pairCode = null
+  qrReady = false
+  qrWaiters = []
+  status = 'unpaired'
+  lastErr = ''
   if (fs.existsSync(AUTH_DIR)) {
-    try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) } catch {}
   }
-  sock = null; status = 'unpaired'; me = null; myName = ''; pairCode = null; lastErr = ''
+  store = freshStore(); writeStore()
+  for (const d of [AV_DIR, MEDIA_DIR]) {
+    try { fs.rmSync(d, { recursive: true, force: true }) } catch {}
+    fs.mkdirSync(d, { recursive: true })
+  }
+  nativeEmit({ type: 'loggedout' })
   setStatus('unpaired', { pairCode: null })
 }
 
@@ -304,13 +315,13 @@ async function start() {
       lastErr = `${code ?? ''} ${lastDisconnect?.error?.message ?? ''}`.trim()
       console.log('Conexão fechada:', code, '-', lastDisconnect?.error?.message)
       me = null
-      if (code === DisconnectReason.loggedOut || code === 428 || /stale|invalid session/i.test(lastErr)) {
-        try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }) } catch {}
-        store = freshStore(); writeStore();
-        for (const d of [AV_DIR, MEDIA_DIR]) { fs.rmSync(d, { recursive: true, force: true }); fs.mkdirSync(d, { recursive: true }) }
-        nativeEmit({ type: 'loggedout' })
-        setStatus('unpaired', { pairCode: null })
+
+      const stale = code === DisconnectReason.loggedOut || code === 428 || /stale|invalid session|bad session|connection terminated/i.test(lastErr)
+      if (stale) {
+        resetStaleSession(lastErr || `code:${code}`)
+        return
       }
+
       const wait = Math.min(2000 * 2 ** retries++, 60000)
       console.log(`Reconectando em ${wait / 1000}s (tentativa ${retries})`)
       reconnectTimer = setTimeout(() => start().catch(console.error), wait)
@@ -388,10 +399,10 @@ async function start() {
     }
   })
 }
+
 const ensureConnected = () => { if (!sock || status !== 'open') throw new Error('WhatsApp não está conectado') }
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => { console.error(req.path, e.message); res.status(400).json({ error: e.message }) })
 
-/* ============================== API ============================== */
 app.use((req, res, next) => {
   if (KEY) {
     if (req.query.k === KEY) { res.setHeader('Set-Cookie', `wak=${KEY}; Path=/; HttpOnly; SameSite=Strict`); return res.redirect('/') }
@@ -407,13 +418,23 @@ app.get('/api/state', (_, res) => res.json(getState()))
 app.post('/api/pair', wrap(async (req, res) => {
   const number = String(req.body.number || '').replace(/\D/g, '')
   if (number.length < 10) throw new Error('Número inválido. Use DDI + DDD + número, ex.: 5511999998888')
-  if (!sock || sock.authState.creds.registered) throw new Error('Já existe uma sessão')
+  if (sock && (sock.authState?.creds?.registered || status === 'open' || status === 'pairing')) {
+    const reason = `status=${status}, registered=${!!sock.authState?.creds?.registered}`
+    throw new Error('Já existe uma sessão atual. Tente reiniciar o app e limpar a sessão antes de emparelhar novamente.')
+  }
+  if (!sock) {
+    try { await start() } catch (e) {
+      console.error('[pair] start falhou', e.message)
+      throw new Error('Não foi possível iniciar a sessão do WhatsApp. Tente novamente.')
+    }
+  }
   const s = sock
   const limit = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timeout')), ms))])
   let raw
   try { raw = await limit(s.requestPairingCode(number), 40000) }
   catch (e) {
     const reason = lastErr || e.message || 'sessão inválida'
+    resetStaleSession(reason)
     throw new Error('Não foi possível conectar ao WhatsApp' + ` (${reason})` + '. Tente de novo.')
   }
   const code = raw.match(/.{1,4}/g).join('-')
@@ -421,7 +442,6 @@ app.post('/api/pair', wrap(async (req, res) => {
 }))
 app.post('/api/logout', wrap(async (_, res) => { try { await sock?.logout() } catch {} res.json({ ok: true }) }))
 
-/* ---- conversas ---- */
 app.get('/api/chats', (req, res) => {
   const arch = req.query.archived === '1'
   const list = Object.keys(store.chats)
@@ -470,7 +490,6 @@ app.get('/api/chats/:jid/export', (req, res) => {
   res.send(lines.join('\n'))
 })
 
-/* ---- contatos / info ---- */
 app.get('/api/contacts', (_, res) => {
   res.json(Object.entries(store.contacts).filter(([j, n]) => j.endsWith('@s.whatsapp.net') && n && j !== me)
     .map(([id, name]) => ({ id, name, number: fmtNumber(id) })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')))
@@ -521,7 +540,6 @@ let avBusy = 0; const avWait = []
 const avSlot = async () => { if (avBusy >= 3) await new Promise((r) => avWait.push(r)); avBusy++ }
 const avFree = () => { avBusy--; avWait.shift()?.() }
 
-/* ---- envio ---- */
 function afterSend(jid, sent) {
   const p = sent && addMessage(sent)
   if (p) broadcast('message', { chat: chatView(jid), message: p })
@@ -530,7 +548,7 @@ function afterSend(jid, sent) {
 const quotedOpt = (jid, id) => { const q = id && rawOf(jid, id); return q ? { quoted: q } : {} }
 async function sendTo(jid, content, opts = {}) { ensureConnected(); jid = canon(jid); return afterSend(jid, await sock.sendMessage(jid, content, opts)) }
 const mediaFile = (id) => path.join(MEDIA_DIR, safe(id))
-const thumbOf = (req) => { const t = req.headers['x-thumb'], d = String(req.headers['x-dim'] || '').split('x').map(Number); return { ...(t ? { jpegThumbnail: Buffer.from(t, 'base64') } : {}), ... (d[0] && d[1] ? { width: d[0], height: d[1] } : {}) } }
+const thumbOf = (req) => { const t = req.headers['x-thumb'], d = String(req.headers['x-dim'] || '').split('x').map(Number); return { ...(t ? { jpegThumbnail: Buffer.from(t, 'base64') } : {}), ...(d[0] && d[1] ? { width: d[0], height: d[1] } : {}) } }
 
 app.post('/api/send', wrap(async (req, res) => {
   const { jid, text, quotedId } = req.body
@@ -641,7 +659,6 @@ app.post('/api/translate', wrap(async (req, res) => {
   res.json({ text: j?.responseData?.translatedText || '' })
 }))
 
-/* ---- stickers e GIFs ---- */
 app.get('/api/stickers', (_, res) => res.json(store.stickers.map((s) => ({ id: s.id, sha: s.sha }))))
 async function downloadRaw(raw) {
   const f = mediaFile(raw.key.id)
@@ -679,7 +696,6 @@ app.post('/api/send-gif', wrap(async (req, res) => {
   res.json({ ok: true, id: await sendTo(req.body.jid, { video: buf, gifPlayback: true, mimetype: 'video/mp4' }) })
 }))
 
-/* ---- mídia (com cache em disco e suporte a Range) ---- */
 const inflight = new Map()
 app.get('/api/media/:jid/:id', async (req, res) => {
   try {
@@ -698,12 +714,10 @@ app.get('/api/media/:jid/:id', async (req, res) => {
   } catch (e) { res.status(500).send('Não foi possível baixar a mídia: ' + e.message) }
 })
 
-/* ---- chamadas ---- */
 app.get('/api/calls', (_, res) => res.json(store.calls.map((c) => ({ ...c, name: nameOf(c.jid) }))))
 const rejectCall = async (id, from) => { ensureConnected(); await sock.rejectCall(id, from); const e = store.calls.find((c) => c.id === id); if (e) { e.result = 'declined'; saveStore() } }
 app.post('/api/calls/reject', wrap(async (req, res) => { await rejectCall(req.body.id, req.body.from); res.json({ ok: true }) }))
 
-/* ---- status ---- */
 app.get('/api/statuses', (_, res) => {
   const now = Date.now() / 1000, by = new Map()
   for (const m of store.statuses) {
@@ -735,7 +749,6 @@ app.post('/api/status/media', rawBody, wrap(async (req, res) => {
   res.json({ ok: true, id: await postStatus(content) })
 }))
 
-/* ---- grupos e listas de transmissão ---- */
 app.post('/api/groups', wrap(async (req, res) => {
   ensureConnected()
   const { subject, participants } = req.body
@@ -761,7 +774,6 @@ app.post('/api/lists/:id/send', wrap(async (req, res) => {
   res.json({ ok: true, sent: ok, total: l.members.length })
 }))
 
-/* ---- perfil, privacidade e configurações ---- */
 app.get('/api/profile', wrap(async (_, res) => {
   const out = { name: myName, number: fmtNumber(me), me, about: '', privacy: {}, blocked: store.blocked.map((id) => ({ id, name: nameOf(id) })), cfg: store.cfg }
   if (status === 'open') {
@@ -790,12 +802,10 @@ app.post('/api/privacy', wrap(async (req, res) => {
 }))
 app.post('/api/config', (req, res) => { Object.assign(store.cfg, req.body || {}); saveStore(); res.json(store.cfg) })
 
-/* ---- cache de mídia ---- */
 const dirSize = (d) => { let n = 0; try { for (const f of fs.readdirSync(d)) n += fs.statSync(path.join(d, f)).size } catch {} return n }
 app.get('/api/cache', (_, res) => res.json({ bytes: dirSize(MEDIA_DIR) + dirSize(AV_DIR) }))
 app.post('/api/cache/clear', (_, res) => { for (const d of [MEDIA_DIR, AV_DIR]) for (const f of fs.readdirSync(d)) fs.rmSync(path.join(d, f), { force: true }); res.json({ ok: true }) })
 
-/* ---- ponte com o app Android (notificações) ---- */
 app.get('/native/events', (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' })
   res.write(`data: ${JSON.stringify({ type: 'state', status })}\n\n`)
