@@ -307,8 +307,8 @@ async function start() {
 
   const s = makeWASocket({
     auth: state,
-    version: [2, 3000, 1015901307],
-    browser: ['Chrome (Linux)', 'Chrome', '120.0.0.0'],
+    version: [2, 3000, 1033893291],
+    browser: Browsers.macOS('Desktop'),
     syncFullHistory: !process.env.NOHISTORY, shouldSyncHistoryMessage: () => true,
     markOnlineOnConnect: false, getMessage: async () => undefined,
   })
