@@ -299,36 +299,50 @@ function resetStaleSession(reason = '') {
 }
 
 async function start() {
-  clearTimeout(reconnectTimer)
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
-  let version
-  if (process.env.NOVERSION) console.log('Usando a versão padrão do Baileys')
-  else try { const r = await Promise.race([fetchLatestBaileysVersion(), new Promise((_, no) => setTimeout(() => no(new Error('tempo esgotado')), 6000))]); version = r.version; console.log('Versão do Baileys:', version) } catch (e) { console.log('Não foi possível obter a versão do Baileys:', e.message) }
+  clearTimeout(reconnectTimer);
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-  const s = makeWASocket({
+    // No Android (Node 18), evite o fetch dinâmico para prevenir falhas de rede/TLS
+    // Use a tupla de versão testada e homologada para evitar o erro 405 da Meta:
+    const stableVersion = [2, 3000, 1033893291]; 
+    console.log('Usando versão fixa compatível com Node 18:', stableVersion);
+
+    const s = makeWASocket({
     auth: state,
-    version: [2, 3000, 1033893291],
-    browser: Browsers.macOS('Desktop'),
-    syncFullHistory: !process.env.NOHISTORY, shouldSyncHistoryMessage: () => true,
-    markOnlineOnConnect: false, getMessage: async () => undefined,
-  })
-  sock = s; qrReady = false
-  state.creds.registered ? setStatus('connecting') : setStatus('unpaired', { pairCode: null })
-  s.ev.on('creds.update', saveCreds)
+        version: stableVersion,
+        // Assinatura de navegador ideal para evitar bloqueio de IP/método no mobile
+        browser: ['Chrome', 'Windows', '110.0.5481.177'],
+        syncFullHistory: !process.env.NOHISTORY, 
+        shouldSyncHistoryMessage: () => true,
+        markOnlineOnConnect: false, 
+        getMessage: async () => undefined,
+    });
+  
+  sock = s; 
+    qrReady = false;
+    
+    state.creds.registered ? setStatus('connecting') : setStatus('unpaired', { pairCode: null });
+    s.ev.on('creds.update', saveCreds);
 
-  s.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (s !== sock) return
-    if (qr) { qrReady = true; qrWaiters.forEach((f) => f()); qrWaiters = [] }
-    if (connection === 'open') {
-      retries = 0; lastErr = ''
-      me = jidNormalizedUser(s.user?.id); myName = s.user?.name || ''
-      setStatus('open', { pairCode: null }); console.log('Conectado como', me)
-      s.fetchBlocklist().then((l) => { store.blocked = (l || []).map(canon); saveStore() }).catch(() => {})
-    }
-    if (connection === 'close') {
-      const code = lastDisconnect?.error?.output?.statusCode
-      lastErr = `${code ?? ''} ${lastDisconnect?.error?.message ?? ''}`.trim()
-      console.log('Conexão fechada:', code, '-', lastDisconnect?.error?.message)
+    s.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    if (s !== sock) return;
+        if (qr) { 
+            qrReady = true; 
+            qrWaiters.forEach((f) => f()); 
+            qrWaiters = []; 
+        }
+        if (connection === 'open') {
+            retries = 0; 
+            lastErr = '';
+            me = jidNormalizedUser(s.user?.id); 
+            myName = s.user?.name || '';
+            setStatus('open', { pairCode: null }); 
+            console.log('Conectado como', me);
+        }
+        if (connection === 'close') {
+                      lastErr = '';
+            const code = lastDisconnect?.error?.output?.statusCode;
+            console.log(`Conexão fechada. Código: ${code}`);
       me = null
 
       const stale = code === DisconnectReason.loggedOut || code === 401 || /stale|invalid session|bad session|connection terminated|unauthorized/i.test(lastErr)
