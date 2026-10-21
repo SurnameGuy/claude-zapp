@@ -21,16 +21,26 @@ public class NodeService extends Service {
     private volatile boolean stop = false;
     private PowerManager.WakeLock wakeLock;
     private String lastStatus = "";
+    private boolean dead = false;
 
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        Notifier.channels(this);
-        Notification n = Notifier.foreground(this, "Iniciando…");
-        if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        else startForeground(1, n);
+        try {
+            Notifier.channels(this);
+            Notification n = Notifier.foreground(this, "Iniciando…");
+            if (Build.VERSION.SDK_INT >= 34) startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            else startForeground(1, n);
+        } catch (Throwable e) {
+            // Android 12+ recusa foreground service iniciado em segundo plano (ex.: reinício automático após um crash).
+            // Antes isso derrubava o app em loop ("falhas constantes"); agora o serviço só desiste.
+            android.util.Log.e("zapp", "startForeground recusado", e);
+            dead = true;
+            stopSelf();
+            return;
+        }
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zapp:connection");
         wakeLock.setReferenceCounted(false);
@@ -39,7 +49,8 @@ public class NodeService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        NodeBridge.start(this);
+        if (dead) return START_NOT_STICKY;
+        try { NodeBridge.start(this); } catch (Throwable e) { android.util.Log.e("zapp", "Falha ao iniciar o Node", e); }
         if (sse == null) {
             sse = new Thread(new Runnable() { @Override public void run() { loop(); } }, "zapp-events");
             sse.setDaemon(true);
@@ -99,3 +110,4 @@ public class NodeService extends Service {
         }
     }
 }
+
