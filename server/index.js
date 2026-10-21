@@ -1,3 +1,7 @@
+const dns = require('dns');
+if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+}
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 process.env.NODE_OPTIONS = "--no-warnings";
 import dns from 'node:dns';
