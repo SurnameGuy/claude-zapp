@@ -400,6 +400,25 @@ async function start() {
   })
 }
 
+async function maybeAutoStart() {
+  const credsFile = path.join(AUTH_DIR, 'creds.json')
+  if (!fs.existsSync(credsFile)) {
+    console.log('[server] sem sessão persistida: aguardando emparelhamento')
+    return
+  }
+  try {
+    const creds = JSON.parse(fs.readFileSync(credsFile, 'utf8'))
+    if (!creds?.registered) {
+      console.log('[server] sessão persistida encontrada, mas não registrada: aguardando emparelhamento')
+      return
+    }
+    console.log('[server] sessão persistida encontrada: iniciando conexão automática')
+    await start()
+  } catch (e) {
+    console.log('[server] auth persistida inválida; aguardando novo emparelhamento:', e.message)
+  }
+}
+
 const ensureConnected = () => { if (!sock || status !== 'open') throw new Error('WhatsApp não está conectado') }
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => { console.error(req.path, e.message); res.status(400).json({ error: e.message }) })
 
@@ -419,7 +438,6 @@ app.post('/api/pair', wrap(async (req, res) => {
   const number = String(req.body.number || '').replace(/\D/g, '')
   if (number.length < 10) throw new Error('Número inválido. Use DDI + DDD + número, ex.: 5511999998888')
   if (sock && (sock.authState?.creds?.registered || status === 'open' || status === 'pairing')) {
-    const reason = `status=${status}, registered=${!!sock.authState?.creds?.registered}`
     throw new Error('Já existe uma sessão atual. Tente reiniciar o app e limpar a sessão antes de emparelhar novamente.')
   }
   if (!sock) {
@@ -821,4 +839,4 @@ process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.
 process.on('uncaughtException', (e) => console.error('uncaughtException:', e?.message || e))
 server.on('error', (e) => console.error('[server] erro no servidor HTTP:', e.message))
 server.listen(PORT, HOST, () => console.log(`Servidor em http://${HOST}:${PORT}`))
-start().catch((e) => console.error('Falha ao iniciar:', e))
+maybeAutoStart().catch((e) => console.error('Falha ao iniciar sessão automática:', e))
