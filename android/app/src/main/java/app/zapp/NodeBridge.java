@@ -29,29 +29,30 @@ final class NodeBridge {
         if (started) return;
         started = true;
         final Context app = ctx.getApplicationContext();
-        try {
-            final File root = new File(app.getFilesDir(), "app");
-            copyIfNeeded(app, root);
-            File data = new File(app.getFilesDir(), "userdata");
-            data.mkdirs();
-            redirectLogs();
-            setEnv("WA_ROOT", root.getPath());
-            setEnv("WA_PUBLIC", new File(root, "public").getPath());
-            setEnv("WA_DATA", data.getPath());
-            setEnv("WA_KEY", Cfg.token(app));
-            setEnv("PORT", String.valueOf(Cfg.PORT));
-            setEnv("HOME", app.getFilesDir().getPath());
-            setEnv("TMPDIR", app.getCacheDir().getPath());
-            Thread t = new Thread(null, new Runnable() {
-                @Override public void run() {
-                    startNode(new String[]{"node", "--max-old-space-size=384", new File(root, "server.cjs").getPath()});
+        // Tudo roda na thread "node" (4 MB de pilha): a cópia dos assets não trava mais a thread principal.
+        Thread t = new Thread(null, new Runnable() {
+            @Override public void run() {
+                try {
+                    File root = new File(app.getFilesDir(), "app");
+                    copyIfNeeded(app, root);
+                    File data = new File(app.getFilesDir(), "userdata");
+                    data.mkdirs();
+                    redirectLogs();
+                    setEnv("WA_ROOT", root.getPath());
+                    setEnv("WA_PUBLIC", new File(root, "public").getPath());
+                    setEnv("WA_DATA", data.getPath());
+                    setEnv("WA_KEY", Cfg.token(app));
+                    setEnv("PORT", String.valueOf(Cfg.PORT));
+                    setEnv("HOME", app.getFilesDir().getPath());
+                    setEnv("TMPDIR", app.getCacheDir().getPath());
+                    int code = startNode(new String[]{"node", "--max-old-space-size=384", new File(root, "server.cjs").getPath()});
+                    android.util.Log.e("zapp", "Node terminou com código " + code);
+                } catch (Throwable e) {
+                    android.util.Log.e("zapp", "Falha ao iniciar o Node", e);
                 }
-            }, "node", 4 * 1024 * 1024);
-            t.start();
-        } catch (Exception e) {
-            started = false;
-            android.util.Log.e("zapp", "Falha ao iniciar o Node", e);
-        }
+            }
+        }, "node", 4 * 1024 * 1024);
+        t.start();
     }
 
     /** Copia servidor + interface dos assets para o armazenamento interno quando a versão muda. */
@@ -93,3 +94,4 @@ final class NodeBridge {
         f.delete();
     }
 }
+
