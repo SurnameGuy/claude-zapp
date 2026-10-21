@@ -1,6 +1,6 @@
 # Zapp
 
-- PC FUNCIONANDO
+- PC FUNCIONANDO COM NODE LTS v22.16.0 - Precisa deletar pasta userdata a cada tentativa de conexão.
 - APK/MOBILE COM ERROS, AINDA NÃO FUNCIONANDO
 
 Cliente para o recurso **Aparelhos conectados** do WhatsApp, com visual de iPhone. Roda como **app Android (APK)**: o servidor
